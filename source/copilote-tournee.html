@@ -438,6 +438,7 @@ details.fold:not([open]) > summary{border-bottom:0}
 .daychk{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;cursor:pointer;background:var(--bg)}
 
 @media (prefers-reduced-motion:no-preference){.stop,.msg{animation:in .25s ease-out}@keyframes in{from{transform:translateY(4px)}to{transform:none}}}
+.sync-code{font-family:var(--display);font-size:1.7rem;letter-spacing:.06em;text-align:center;background:var(--route-soft);color:var(--route);border-radius:10px;padding:12px 8px;margin:4px 0;word-break:break-word;user-select:all}
 .lock-strip{background:color-mix(in srgb,var(--alert) 10%,var(--surface));border-bottom-color:var(--alert);color:var(--ink)}
 .panel h4{font-family:var(--display);font-size:1.15rem;letter-spacing:.02em;margin:10px 0 0;padding-top:10px;border-top:1px solid var(--line)}
 body.locked > *:not(#lock){display:none !important}
@@ -534,10 +535,14 @@ const rawGet = k => { try { return JSON.parse(localStorage.getItem(k)); } catch 
 const rawSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } };
 const rawDel = k => { try { localStorage.removeItem(k); } catch {} };
 const clone = v => v == null ? null : JSON.parse(JSON.stringify(v));
+let storeHook = null;   // synchronisation : prévenue quand une donnée partagée change vraiment
+const SYNC_WATCH = new Set(['cop.settings','cop.portefeuille','cop.plan','cop.rdv','cop.visites','cop.jours','cop.taches','cop.cr','cop.journal','cop.remarques']);
 const store = {
   get(k){ if (VAULT) return clone(VAULT[k]); return rawGet(k); },
-  set(k, v){ if (VAULT){ VAULT[k] = clone(v); scheduleVault(); } else rawSet(k, v); },
-  del(k){ if (VAULT){ delete VAULT[k]; scheduleVault(); } else rawDel(k); }
+  set(k, v){ const w = storeHook && SYNC_WATCH.has(k), old = w ? JSON.stringify(store.get(k) ?? null) : null;
+    if (VAULT){ VAULT[k] = clone(v); scheduleVault(); } else rawSet(k, v);
+    if (w && JSON.stringify(v ?? null) !== old) storeHook(k); },
+  del(k){ const w = storeHook && SYNC_WATCH.has(k) && store.get(k) != null; if (VAULT){ delete VAULT[k]; scheduleVault(); } else rawDel(k); if (w) storeHook(k); }
 };
 const b64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
 const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
@@ -2511,7 +2516,8 @@ function renderSettings(){
   <div class="panel"><h3>Mes données</h3>
     <p class="note">${STANDALONE ? 'Vos données restent sur ce téléphone. L\'assistant IA complet (questions libres, analyse des comptes rendus, lecture des photos) est dans la version claude.ai ; les données ne passent pas d\'une version à l\'autre : « Sauvegarder » ici puis « Restaurer » là-bas.' : 'Pour le terrain, installez la version téléphone (GPS, vraie carte, hors connexion) : <a href="https://mybestpair.github.io/copilote-tournee/" target="_blank" rel="noopener">mybestpair.github.io/copilote-tournee</a>. Les données ne passent pas d\'une version à l\'autre : « Sauvegarder » ici puis « Restaurer » là-bas.'}</p>
     <div class="actions"><button class="btn" data-act="tab" data-tab="bilan">Bilan du test</button><button class="btn" data-act="defaults">Valeurs par défaut</button></div></div>
-  ${securityPanel()}`;
+  ${securityPanel()}
+  ${syncPanel()}`;
   $('#restore-file2').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) restoreBackup(f); };
 }
 function saveSettings(){ store.set('cop.settings', state.settings); buildPlan(); dirty(); if (!$('#p-jour').hidden) renderDay(); if (!$('#p-portefeuille').hidden) renderPortfolio(); }
@@ -3293,7 +3299,7 @@ function securityPanel(){
   const s = S(), on = lockOn(), c = CONF();
   return `<div class="panel" id="secu"><h3>Sécurité et confidentialité</h3>
     <label class="daychk" style="align-self:flex-start"><input type="checkbox" id="o-conf" ${c ? 'checked' : ''}> <strong>Mode confidentiel</strong></label>
-    <p class="note">${c ? 'Activé : vos clients, notes et photos ne quittent pas cet appareil. L\'assistant répond sur place, sans IA en ligne ; pas de dictée ni de lecture des photos. Seuls la carte (si elle est activée ci-dessous) et les boutons Waze et Maps utilisent des positions, jamais de noms.'
+    <p class="note">${c ? 'Activé : vos clients, notes et photos ne quittent pas cet appareil. L\'assistant répond sur place, sans IA en ligne ; pas de dictée ni de lecture des photos. Seuls la carte (si elle est activée ci-dessous) et les boutons Waze et Maps utilisent des positions, jamais de noms' + (syncOn() ? ' ; la synchronisation n\'envoie que des données chiffrées, illisibles pour le serveur.' : '.')
       : 'Désactivé : ' + (STANDALONE ? 'la dictée peut passer par le service vocal du navigateur.' : 'les questions, comptes rendus, photos et PDF que vous confiez à l\'assistant sont envoyés à l\'IA de votre compte Claude.')}</p>
     ${STANDALONE ? `<label class="daychk" style="align-self:flex-start"><input type="checkbox" id="o-map" ${MAPON() ? 'checked' : ''}> <strong>Vraie carte et trajets routiers</strong></label>
     <p class="note">${MAPON() ? 'Activé : la carte OpenStreetMap s\'affiche directement dans Tournée. Seules les positions des arrêts partent vers OpenStreetMap et OSRM (calcul des trajets), jamais les noms, téléphones ni notes de vos clients.' : 'Désactivé : carte schématique et distances estimées, rien ne sort de l\'appareil.'}</p>` : ''}
@@ -3502,6 +3508,14 @@ document.addEventListener('click', e => {
   else if (a === 'bilan-csv'){ bilanCsv(); }
   else if (a === 'backup'){ secModal('backup'); }
   else if (a === 'sec'){ secModal(b.dataset.mode); }
+  else if (a === 'sync-start'){ syncStart(); }
+  else if (a === 'sync-join'){ syncJoinModal(); }
+  else if (a === 'sync-now'){ syncNow({ force:true }).then(ok => { if (ok) flash('Synchronisé.'); renderSettings(); }); }
+  else if (a === 'sync-code'){ syncCodeModal(syncCfg()?.code || '', false); }
+  else if (a === 'sync-copy'){ navigator.clipboard?.writeText($('#syncCodeTxt').textContent).then(() => flash('Code copié.'), () => flash('Copie impossible : recopiez-le à la main.')); }
+  else if (a === 'sync-close'){ closeModal('sync-modal'); }
+  else if (a === 'sync-off'){ if (confirm('Arrêter la synchronisation sur cet appareil ? Vos données y restent ; la copie du serveur et vos autres appareils ne changent pas.')){ store.del('cop.sync'); SYNC_KEYS_C = null; renderSettings(); flash('Synchronisation arrêtée sur cet appareil.'); } }
+  else if (a === 'sync-forget'){ if (confirm('Arrêter la synchronisation partout et supprimer la copie chiffrée du serveur ? Les données restent sur chaque appareil.')) syncForget(); }
   else if (a === 'lock-later'){ state.settings.lockLater = TODAY; store.set('cop.settings', state.settings); closeModal('sec-modal'); flash('D\'accord. Vous pourrez le créer dans Réglages › Sécurité.'); }
   else if (a === 'sec-close'){ closeModal('sec-modal'); RESTORE = null; }
   else if (a === 'lock-now'){ if (lockOn()) lockNow(); }
@@ -3627,6 +3641,207 @@ document.addEventListener('change', e => {
   }
 });
 
+/* ============================================================
+   16. Synchronisation entre appareils (chiffrée de bout en bout)
+   Le code de jumelage reste sur les appareils : il donne l'adresse de la boîte, le jeton d'accès et la clé de chiffrement.
+   Le serveur ne reçoit qu'un bloc chiffré, illisible pour lui. Les photos ne sont pas synchronisées.
+   ============================================================ */
+const SYNC_URL = 'https://copilote-tournee.studio-conseiller.workers.dev/api/sync/';
+const SYNC_LOCAL_FIELDS = ['lockDelay', 'lockLater', 'carteEnLigne', 'confidentiel'];   // réglages propres à chaque appareil
+const SYNC_ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+let SYNC_KEYS_C = null, syncBusy = false, syncTimer = null, syncApplying = false, syncState = { st:'', msg:'' }, syncAgain = false;
+const syncCfg = () => store.get('cop.sync');
+const syncOn = () => !!syncCfg()?.code;
+function syncSave(c){ store.set('cop.sync', c); }
+function newSyncCode(){ const r = crypto.getRandomValues(new Uint8Array(20)); let s = ''; r.forEach((b, i) => { s += SYNC_ALPHA[b % SYNC_ALPHA.length] + (i % 4 === 3 && i < 19 ? '-' : ''); }); return s; }
+const normCode = c => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
+async function syncKeys(code){
+  const n = normCode(code);
+  if (SYNC_KEYS_C?.n === n) return SYNC_KEYS_C;
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(n), 'HKDF', false, ['deriveBits', 'deriveKey']);
+  const salt = new TextEncoder().encode('copilote-sync-v1'), info = t => new TextEncoder().encode(t);
+  const hex = async t => [...new Uint8Array(await crypto.subtle.deriveBits({ name:'HKDF', hash:'SHA-256', salt, info:info(t) }, base, 256))].map(b => b.toString(16).padStart(2, '0')).join('');
+  const key = await crypto.subtle.deriveKey({ name:'HKDF', hash:'SHA-256', salt, info:info('copilote-enc') }, base, { name:'AES-GCM', length:256 }, false, ['encrypt', 'decrypt']);
+  return SYNC_KEYS_C = { n, id:await hex('copilote-id'), tok:await hex('copilote-auth'), key };
+}
+async function gz(u8, dir){ if (!window.CompressionStream) return null; const s = new Blob([u8]).stream().pipeThrough(dir ? new CompressionStream('gzip') : new DecompressionStream('gzip')); return new Uint8Array(await new Response(s).arrayBuffer()); }
+async function syncSeal(key, obj){
+  let u8 = new TextEncoder().encode(JSON.stringify(obj)), z = await gz(u8, true); if (z) u8 = z;
+  const iv = crypto.getRandomValues(new Uint8Array(12)), d = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key, u8);
+  return (z ? 'g1:' : 'p1:') + b64(iv) + ':' + b64(new Uint8Array(d));
+}
+async function syncOpen(key, s){
+  const [fmt, iv, data] = s.split(':'); let u8 = new Uint8Array(await crypto.subtle.decrypt({ name:'AES-GCM', iv:unb64(iv) }, key, unb64(data)));
+  if (fmt === 'g1') u8 = await gz(u8, false);
+  return JSON.parse(new TextDecoder().decode(u8));
+}
+// Une donnée synchronisée vient de changer sur cet appareil : on note l'heure et on envoie quelques secondes après
+function syncMark(k){
+  if (syncApplying) return;
+  const c = syncCfg(); if (!c?.code) return;
+  c.ts = c.ts || {}; c.ts[k] = Date.now(); syncSave(c); syncSoon(3000);
+}
+function syncSoon(ms){ clearTimeout(syncTimer); syncTimer = setTimeout(() => syncNow(), ms); }
+const syncBlocked = () => !state || !!document.querySelector('.modal') || !!state.cr || document.body.classList.contains('in-setup') || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !document.activeElement.closest('#p-reglages'));
+// Modifié des deux côtés depuis la dernière synchronisation (par ex. téléphone hors réseau) : on fusionne fiche par fiche, rien ne se perd
+const MERGE_ID = { 'cop.taches':x => x.id, 'cop.cr':x => x.client + '|' + x.date, 'cop.rdv':x => x.id + '|' + x.date, 'cop.visites':x => x.date + '|' + x.id, 'cop.remarques':x => x.date + '|' + x.texte };
+function mergeList(newer, older, key, orDone){
+  const out = (newer || []).slice(), seen = new Map(out.map((x, i) => [key(x), i]));
+  (older || []).forEach(x => { const kx = key(x); if (!seen.has(kx)){ seen.set(kx, out.length); out.push(x); } else if (orDone && x.done && !out[seen.get(kx)].done) out[seen.get(kx)] = Object.assign({}, out[seen.get(kx)], { done:true }); });
+  return out;
+}
+function mergeKey(k, lv, rv, localNewer){
+  const N = localNewer ? lv : rv, O = localNewer ? rv : lv;
+  if (N == null || O == null) return N ?? O;
+  if (MERGE_ID[k]) return mergeList(N, O, MERGE_ID[k]);
+  if (k === 'cop.journal' || k === 'cop.jours') return Object.assign({}, O, N);
+  if (k === 'cop.portefeuille') return N.source !== O.source || N.at !== O.at ? N : Object.assign({}, N, { contacts:mergeList(N.contacts, O.contacts, x => x.id) });
+  if (k === 'cop.plan') return N.date === O.date ? Object.assign({}, N, { stops:mergeList(N.stops, O.stops, x => x.id, true).filter(x => (N.stops || []).some(y => y.id === x.id)) }) : (N.date > O.date ? N : O);
+  return N;
+}
+function applyKey(k, v){
+  if (k === 'cop.settings' && v){ const mine = store.get('cop.settings') || {}; v = Object.assign({}, v); SYNC_LOCAL_FIELDS.forEach(f => { if (f in mine) v[f] = mine[f]; else delete v[f]; }); }
+  if (v == null) store.del(k); else store.set(k, v);
+}
+async function syncFetch(path, opt = {}){
+  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 15000);
+  try { return await fetch(SYNC_URL + path, { ...opt, signal:ctl.signal, cache:'no-store' }); } finally { clearTimeout(to); }
+}
+function setSyncState(st, msg){ syncState = { st, msg }; const el = $('#syncStatus'); if (el) el.innerHTML = syncStatusHtml(); }
+async function syncNow(opts = {}){
+  const c = syncCfg(); if (!c?.code) return false;
+  if (syncBusy){ syncAgain = true; return false; }
+  if (!navigator.onLine){ setSyncState('off', 'Hors connexion : les changements partiront au retour du réseau.'); return false; }
+  if (!opts.force && syncBlocked()){ syncSoon(15000); return false; }
+  syncBusy = true; setSyncState('busy', 'Synchronisation…');
+  try {
+    for (let tries = 0; tries < 3; tries++){
+      const K = await syncKeys(c.code), H = { 'x-sync-token':K.tok };
+      const r = await syncFetch(K.id + '?since=' + (c.ver || 0), { headers:H });
+      if (r.status === 403) throw new Error('Code refusé par le serveur.');
+      if (r.status !== 200 && r.status !== 404) throw new Error('Serveur indisponible (' + r.status + ').');
+      const j = await r.json(), rver = j.ver || 0;
+      let remote = null;
+      if (r.status === 200 && !j.same) remote = await syncOpen(K.key, j.data);
+      const rts = remote ? remote.ts || {} : (c.rts || {});
+      const changed = [];
+      if (remote){
+        syncApplying = true;
+        try { c.ts = c.ts || {}; const base = c.rts || {};
+          BACKUP_KEYS.forEach(k => { const rt = rts[k] || 0, lt = c.ts[k] || 0;
+            if (opts.join){ if (rt){ applyKey(k, remote.data[k]); c.ts[k] = rt; changed.push(k); } else store.del(k); return; }
+            if (rt > (base[k] || 0) && lt > (base[k] || 0) && rt !== lt){   // conflit : fusion, puis renvoi
+              applyKey(k, mergeKey(k, store.get(k), remote.data[k], lt > rt)); c.ts[k] = Math.max(lt, rt) + 1; changed.push(k); }
+            else if (rt > lt){ applyKey(k, remote.data[k]); c.ts[k] = rt; changed.push(k); } }); }
+        finally { syncApplying = false; }
+      }
+      const push = BACKUP_KEYS.some(k => ((c.ts || {})[k] || 0) > (rts[k] || 0)) || (r.status === 404);
+      if (push){
+        const data = {}; BACKUP_KEYS.forEach(k => { data[k] = store.get(k); });
+        const sealed = await syncSeal(K.key, { data, ts:c.ts || {}, at:Date.now() });
+        if (sealed.length > 1850000) throw new Error('Données trop volumineuses pour la synchronisation.');
+        const p = await syncFetch(K.id, { method:'PUT', headers:{ ...H, 'content-type':'application/json' }, body:JSON.stringify({ ver:rver, data:sealed }) });
+        if (p.status === 409){ c.ver = 0; continue; }   // un autre appareil vient d'envoyer : on recommence
+        if (!p.ok) throw new Error('Envoi refusé (' + p.status + ').');
+        c.ver = (await p.json()).ver; c.rts = Object.assign({}, c.ts);
+      } else { c.ver = rver; c.rts = Object.assign({}, rts); }
+      c.last = Date.now(); syncSave(c);
+      if (changed.length || opts.join) syncReload(opts.join ? 'Données de votre autre appareil récupérées.' : 'Mis à jour depuis votre autre appareil.');
+      setSyncState('ok', ''); return true;
+    }
+    throw new Error('Trop de changements simultanés, nouvel essai bientôt.');
+  } catch (e){
+    setSyncState('err', e?.name === 'AbortError' ? 'Le serveur ne répond pas (réseau bloqué ?).' : (e?.message || 'Échec de la synchronisation.'));
+    return false;
+  } finally {
+    syncBusy = false;
+    if (syncAgain){ syncAgain = false; syncSoon(1500); }
+  }
+}
+// Après réception : l'état est relu, les écrans redessinés (les écritures qui en découlent ne repartent pas vers le serveur)
+function syncReload(msg){
+  const tab = PANELS.find(p => !$('#p-' + p).hidden) || 'accueil';
+  syncApplying = true;
+  try { initState(); if (!state.plan) buildPlan(); renderAll(); showTab(tab); applyConf(); }
+  finally { syncApplying = false; }
+  if (msg) flash(msg);
+}
+function syncStatusHtml(){
+  const c = syncCfg(); if (!c?.code) return '';
+  const ago = c.last ? Math.round((Date.now() - c.last) / 60000) : null;
+  const when = ago == null ? 'jamais' : ago < 1 ? 'à l\'instant' : ago < 60 ? `il y a ${ago} min` : `le ${new Date(c.last).toLocaleString('fr-FR', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}`;
+  const chip = syncState.st === 'err' ? '<span class="chip late">problème</span>' : syncState.st === 'off' ? '<span class="chip warn">hors connexion</span>' : syncState.st === 'busy' ? '<span class="chip warn">en cours</span>' : '<span class="chip ok">activée</span>';
+  return `${chip}Dernière synchronisation : ${when}.${syncState.msg ? ' ' + esc(syncState.msg) : ''}`;
+}
+function syncPanel(){
+  if (!STANDALONE) return `<div class="panel"><h3>Synchronisation entre appareils</h3><p class="note">Disponible dans la version installable (téléphone et ordinateur) : <a href="https://mybestpair.github.io/copilote-tournee/" target="_blank" rel="noopener">mybestpair.github.io/copilote-tournee</a>.</p></div>`;
+  const on = syncOn();
+  return `<div class="panel" id="syncp"><h3>Synchronisation entre appareils</h3>
+    <p class="note">Retrouvez les mêmes clients, rendez-vous, tâches et comptes rendus sur votre téléphone et votre ordinateur. Tout est chiffré sur l'appareil avec votre code de jumelage avant d'être envoyé : le serveur ne garde qu'un bloc illisible. Les photos restent sur l'appareil où elles ont été prises.</p>
+    ${on ? `<p class="note" id="syncStatus">${syncStatusHtml()}</p>
+      <div class="actions"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button><button class="btn" data-act="sync-code">Afficher le code de jumelage</button><button class="btn" data-act="sync-off">Arrêter sur cet appareil</button></div>
+      <p class="note"><button class="linkbtn danger-link" data-act="sync-forget">Arrêter partout et supprimer la copie chiffrée du serveur</button></p>`
+    : `<div class="actions"><button class="btn primary" data-act="sync-start">Activer (premier appareil)</button><button class="btn" data-act="sync-join">J'ai déjà un code (autre appareil)</button></div>`}
+  </div>`;
+}
+function syncCodeModal(code, first){
+  modal('sync-modal', `<h2>${first ? 'Synchronisation activée' : 'Code de jumelage'}</h2>
+    <p>Sur votre autre appareil, ouvrez Réglages › Synchronisation › « J'ai déjà un code », et saisissez :</p>
+    <p class="sync-code num" id="syncCodeTxt">${esc(code)}</p>
+    <p class="note">Ce code est la clé de vos données : <strong>ne l'envoyez pas par e-mail ni par message</strong>, recopiez-le à la main. Gardez-le en lieu sûr : il permet aussi de tout récupérer sur un nouveau téléphone.</p>
+    <div class="actions"><button class="btn" data-act="sync-copy">Copier</button><button class="btn primary" data-act="sync-close">J'ai noté le code</button></div>`, 'Code de jumelage');
+}
+function syncJoinModal(){
+  modal('sync-modal', `<form id="sj-form" autocomplete="off"><h2>Rejoindre la synchronisation</h2>
+    <p class="note">Saisissez le code affiché sur votre premier appareil (Réglages › Synchronisation › « Afficher le code de jumelage »).</p>
+    <div class="field"><label for="sj-code">Code de jumelage</label><input id="sj-code" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"></div>
+    <p class="note"><span class="chip warn">attention</span>Les données actuelles de cet appareil seront remplacées par celles de votre premier appareil.</p>
+    <p class="lock-msg" id="sj-msg" role="alert"></p>
+    <div class="actions"><button class="btn primary" type="submit" id="sj-go">Rejoindre</button><button class="btn" type="button" data-act="sync-close">Annuler</button></div></form>`, 'Rejoindre la synchronisation');
+  setTimeout(() => $('#sj-code')?.focus(), 60);
+  $('#sj-form').onsubmit = async e => {
+    e.preventDefault(); const code = $('#sj-code').value, go = $('#sj-go'), msg = t => { $('#sj-msg').textContent = t; };
+    if (normCode(code).length !== 20) return msg('Le code fait 20 caractères (sans compter les tirets).');
+    go.disabled = true; go.textContent = 'Vérification…'; msg('');
+    try {
+      const K = await syncKeys(code), r = await syncFetch(K.id, { headers:{ 'x-sync-token':K.tok } });
+      if (r.status === 404 || r.status === 403) throw new Error('Aucune donnée pour ce code. Vérifiez-le, ou activez d\'abord la synchronisation sur l\'autre appareil.');
+      if (!r.ok) throw new Error('Serveur indisponible (' + r.status + ').');
+      syncSave({ code:normCode(code).replace(/(.{4})(?!$)/g, '$1-'), ver:0, ts:{}, rts:{} });
+      closeModal('sync-modal');
+      if (!await syncNow({ force:true, join:true })) throw new Error(syncState.msg || 'Échec');
+      if (!$('#p-reglages').hidden) renderSettings();
+    } catch (err){
+      if (!$('#sj-msg')){ store.del('cop.sync'); flash(err.message || 'Échec.'); if (!$('#p-reglages').hidden) renderSettings(); return; }
+      msg(err.message || 'Échec.'); go.disabled = false; go.textContent = 'Rejoindre';
+    }
+  };
+}
+async function syncStart(){
+  const code = newSyncCode(), now = Date.now(), ts = {};
+  BACKUP_KEYS.forEach(k => { ts[k] = now; });
+  syncSave({ code, ver:0, ts, rts:{} });
+  syncCodeModal(code, true);
+  const ok = await syncNow({ force:true });
+  if (!ok){ flash(syncState.msg || 'Première synchronisation impossible pour l\'instant : nouvel essai automatique.'); }
+  if (!$('#p-reglages').hidden) renderSettings();
+}
+async function syncForget(){
+  const c = syncCfg(); if (!c?.code) return;
+  try { const K = await syncKeys(c.code); const r = await syncFetch(K.id, { method:'DELETE', headers:{ 'x-sync-token':K.tok } }); if (!r.ok) throw 0; }
+  catch { flash('Le serveur ne répond pas : réessayez avec du réseau.'); return; }
+  store.del('cop.sync'); SYNC_KEYS_C = null; flash('Synchronisation arrêtée, copie du serveur supprimée. Arrêtez-la aussi sur vos autres appareils.'); renderSettings();
+}
+// Déclencheurs : ouverture, retour sur l'application, retour du réseau, puis toutes les minutes
+function startSync(){
+  storeHook = k => syncMark(k);
+  if (!syncOn()) return;
+  syncSoon(800);
+  document.addEventListener('visibilitychange', () => { if (syncOn()) syncSoon(document.hidden ? 0 : 500); });
+  window.addEventListener('online', () => { if (syncOn()) syncSoon(500); });
+  setInterval(() => { if (syncOn() && !document.hidden) syncNow(); }, 60000);
+}
+
 function bootApp(){
 initState();
 $('#today').textContent = dayLabel(TODAY);
@@ -3639,6 +3854,7 @@ if (!state.plan) buildPlan();
 renderAll();
 if (S().setupDone) showTab('accueil'); else showSetup(0);
 startCapabilities();
+startSync();
 setTimeout(askLock, 600);
 }
 

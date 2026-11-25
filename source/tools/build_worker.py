@@ -14,10 +14,49 @@ const BIN = {};
 for (const [k, v] of Object.entries(FILES)) if (v.b64) BIN[k] = Uint8Array.from(atob(v.b64), c => c.charCodeAt(0));
 const SEC = { 'X-Content-Type-Options':'nosniff', 'Referrer-Policy':'no-referrer', 'Permissions-Policy':'geolocation=(self), microphone=(self), camera=(self)', 'X-Robots-Tag':'noindex', 'X-Frame-Options':'DENY', 'Cross-Origin-Opener-Policy':'same-origin',
   'Strict-Transport-Security':'max-age=31536000',
-  'Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://tile.openstreetmap.org; connect-src 'self' https://router.project-osrm.org; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'" };
+  'Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://tile.openstreetmap.org; connect-src 'self' https://router.project-osrm.org https://copilote-tournee.studio-conseiller.workers.dev; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'" };
+// Synchronisation : le serveur ne garde qu'une boîte chiffrée par l'appareil (clé inconnue ici), protégée par un jeton dont il ne garde que l'empreinte
+const ORIGINS = ['https://mybestpair.github.io', 'https://copilote-tournee.studio-conseiller.workers.dev'];
+const MAXB = 1900000;
+function corsH(req){ const o = req.headers.get('origin'); return o && ORIGINS.includes(o) ? { 'Access-Control-Allow-Origin':o, 'Vary':'Origin', 'Access-Control-Allow-Methods':'GET, PUT, DELETE, OPTIONS', 'Access-Control-Allow-Headers':'content-type, x-sync-token', 'Access-Control-Max-Age':'86400' } : {}; }
+async function sha(s){ const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)); return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join(''); }
+async function api(req, env, id){
+  const H = { 'content-type':'application/json; charset=utf-8', 'cache-control':'no-store', ...SEC, ...corsH(req) };
+  const out = (o, status = 200) => new Response(JSON.stringify(o), { status, headers:H });
+  if (req.method === 'OPTIONS') return new Response(null, { status:204, headers:H });
+  const origin = req.headers.get('origin'); if (origin && !ORIGINS.includes(origin)) return out({ error:'origine refusée' }, 403);
+  const tok = req.headers.get('x-sync-token') || ''; if (!/^[a-f0-9]{64}$/.test(tok)) return out({ error:'jeton manquant' }, 401);
+  const db = env.DB, row = await db.prepare('SELECT ver, tok, data, updated FROM boxes WHERE id = ?').bind(id).first(), th = await sha(tok);
+  if (row && row.tok !== th) return out({ error:'jeton refusé' }, 403);
+  if (req.method === 'GET'){
+    if (!row) return out({ ver:0 }, 404);
+    const since = +new URL(req.url).searchParams.get('since');
+    return since === row.ver ? out({ ver:row.ver, same:true }) : out({ ver:row.ver, data:row.data, updated:row.updated });
+  }
+  if (req.method === 'DELETE'){ if (row) await db.prepare('DELETE FROM boxes WHERE id = ?').bind(id).run(); return out({ ok:true }); }
+  if (req.method === 'PUT'){
+    const txt = await req.text(); if (txt.length > MAXB) return out({ error:'trop volumineux' }, 413);
+    let b; try { b = JSON.parse(txt); } catch { return out({ error:'format' }, 400); }
+    if (typeof b.data !== 'string' || !Number.isInteger(b.ver)) return out({ error:'format' }, 400);
+    const now = Date.now();
+    if (!row){
+      if (b.ver !== 0) return out({ ver:0, conflict:true }, 409);
+      await db.prepare('INSERT INTO boxes (id, tok, ver, data, updated) VALUES (?, ?, 1, ?, ?)').bind(id, th, b.data, now).run();
+      return out({ ver:1 });
+    }
+    if (b.ver !== row.ver) return out({ ver:row.ver, conflict:true }, 409);
+    const r = await db.prepare('UPDATE boxes SET ver = ver + 1, data = ?, updated = ? WHERE id = ? AND ver = ?').bind(b.data, now, id, row.ver).run();
+    if (!r.meta.changes) return out({ conflict:true }, 409);
+    return out({ ver:row.ver + 1 });
+  }
+  return out({ error:'méthode' }, 405);
+}
 export default {
-  async fetch(req){
-    const url = new URL(req.url); let path = url.pathname === '/' ? '/index.html' : url.pathname;
+  async fetch(req, env){
+    const url = new URL(req.url);
+    const m = url.pathname.match(/^\\/api\\/sync\\/([a-f0-9]{64})$/);
+    if (m) { try { return await api(req, env, m[1]); } catch (e) { return new Response(JSON.stringify({ error:'serveur' }), { status:500, headers:{ 'content-type':'application/json', ...SEC, ...corsH(req) } }); } }
+    let path = url.pathname === '/' ? '/index.html' : url.pathname;
     const f = FILES[path];
     if (!f || (req.method !== 'GET' && req.method !== 'HEAD')) return new Response('Introuvable', { status:404, headers:{ 'content-type':'text/plain; charset=utf-8', ...SEC } });
     const cache = /\\.(png|json|css)$|^\\/lib\\//.test(path) && path !== '/manifest.webmanifest' ? 'public, max-age=86400' : 'no-cache';

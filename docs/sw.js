@@ -1,5 +1,5 @@
 // Fonctionne sans réseau : l'application et la table des communes sont gardées sur le téléphone ; les mises à jour arrivent à l'ouverture suivante
-const CACHE = 'copilote-6418c1d855';
+const CACHE = 'copilote-2e4d4d7331';
 const SHELL = ['./', 'index.html', 'communes-fr.json', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'lib/leaflet.js', 'lib/leaflet.css', 'lib/xlsx.full.min.js', 'lib/pdf.min.js', 'lib/pdf.worker.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
