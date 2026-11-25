@@ -47,7 +47,7 @@ if ('serviceWorker' in navigator) window.addEventListener('load', () => {
 """
 out.mkdir(parents=True, exist_ok=True)
 (out / 'index.html').write_text(head + page + tail, encoding='utf-8')
-shutil.copy(communes, out / 'communes-fr.json')
+if pathlib.Path(communes).resolve() != (out / 'communes-fr.json').resolve(): shutil.copy(communes, out / 'communes-fr.json')
 # Bibliothèques hébergées avec le site (plus d'appel à cdnjs : rien ne dépend d'un serveur tiers)
 pkg = pathlib.Path(__file__).resolve().parent.parent / 'pkg'
 LIBS = { 'xlsx.full.min.js':'x-xlsx/package/dist/xlsx.full.min.js', 'pdf.min.js':'x-pdfjs/package/build/pdf.min.js', 'pdf.worker.min.js':'x-pdfjs/package/build/pdf.worker.min.js',

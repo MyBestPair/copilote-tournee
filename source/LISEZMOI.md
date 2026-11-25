@@ -20,3 +20,8 @@ Aucune donnée de client ne passe par le serveur : tout reste dans le navigateur
 - Sauvegardes chiffrées par mot de passe (version 2) ; les anciennes sauvegardes en clair restent lisibles à la restauration.
 - « Effacer toutes mes données de cet appareil » (confirmation EFFACER).
 - Version installable : bibliothèques (Excel, PDF, carte) hébergées dans `lib/`, en-têtes CSP, X-Frame-Options, HSTS posés par le Worker.
+
+## Hébergement (25 nov. 2026)
+- Adresse principale : https://mybestpair.github.io/copilote-tournee/ (GitHub Pages, branche `claude/zealous-turing-4shyoc`, dossier `docs/`) ; elle passe sur le réseau de l'entreprise, contrairement à `workers.dev`.
+- Copie de secours : Worker Cloudflare `copilote-tournee` (`build_worker.py`, en-têtes de sécurité complets).
+- À chaque mise à jour : régénérer `docs/` avec `build_pwa.py`, pousser, puis redéployer le Worker et la page claude.ai.
