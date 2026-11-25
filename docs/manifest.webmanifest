@@ -1,0 +1,29 @@
+{
+ "name": "Copilote de tournée",
+ "short_name": "Copilote",
+ "lang": "fr",
+ "start_url": "./",
+ "scope": "./",
+ "display": "standalone",
+ "background_color": "#edf1ef",
+ "theme_color": "#0c6a47",
+ "description": "Tournées de commercial organisées, imprévus gérés, comptes rendus dictés.",
+ "icons": [
+  {
+   "src": "icon-192.png",
+   "sizes": "192x192",
+   "type": "image/png"
+  },
+  {
+   "src": "icon-512.png",
+   "sizes": "512x512",
+   "type": "image/png"
+  },
+  {
+   "src": "icon-maskable-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "maskable"
+  }
+ ]
+}
