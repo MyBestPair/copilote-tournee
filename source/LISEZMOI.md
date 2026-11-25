@@ -32,3 +32,9 @@ Aucune donnée de client ne passe par le serveur : tout reste dans le navigateur
 - Fusion : la dernière modification l'emporte, clé par clé ; si les deux appareils ont modifié la même donnée depuis la dernière synchro (hors réseau), fusion fiche par fiche (tâches, comptes rendus, rendez-vous, visites, remarques, clients, journal, plan du jour). Réglages propres à l'appareil non partagés (délai de verrouillage, carte, mode confidentiel). Photos non synchronisées.
 - Déclenchement : à l'ouverture, 3 s après un changement, au retour sur l'application ou du réseau, et chaque minute.
 - Limite connue : le réseau de l'entreprise bloque `workers.dev` ; pour le PC du travail, il faudra un nom de domaine (par ex. `sync.mybestpair.fr`) relié au Worker.
+
+## Compte e-mail + mot de passe (25 nov. 2026, remplace le code de jumelage dans l'interface)
+- Clé maîtresse = PBKDF2-SHA256(mot de passe, sel « copilote-compte|e-mail », 600 000 tours), calculée sur l'appareil ; HKDF en tire le jeton d'accès et la clé AES-GCM. Boîte = SHA-256(« copilote-compte|e-mail ») : le serveur ne connaît ni l'adresse en clair ni le mot de passe.
+- Mot de passe perdu = données du compte illisibles (elles restent sur les appareils déjà connectés). Changement de mot de passe : rechiffrement + nouveau jeton (`newTok`), les autres appareils demandent de se reconnecter.
+- Après 5 mauvais mots de passe, attente de 1 min qui double à chaque échec (max 1 h) : colonnes `fails` et `until`.
+- Connexion possible dès le premier écran de la configuration ; « Me déconnecter et effacer cet appareil » pour un ordinateur partagé.

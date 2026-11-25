@@ -2513,6 +2513,7 @@ function renderSettings(){
   const s = S();
   const abs = (s.absences || []).slice().sort((a,b) => a.du.localeCompare(b.du));
   $('#p-reglages').innerHTML = `<div class="cal-head"><div><h2>Réglages</h2><p class="note">Ils servent au calcul des tournées et de l'agenda. Toute modification recalcule le planning.</p></div><div class="actions"><button class="btn primary" data-act="tab" data-tab="bilan">Bilan du test</button><button class="btn" data-act="setup-again">Refaire la configuration guidée</button></div></div>
+  ${syncPanel()}
   <div class="panel"><h3>Mes lieux de départ et d'arrivée</h3>
     <p class="note">Domicile, dépôt, agence, hôtel… Chaque jour, vous pouvez partir de l'un et finir à un autre (écran Tournée, « Modifier »).</p>
     <div class="list places">${lieux().map(l => `<div class="row"><strong>${esc(l.nom)}</strong><span class="hide-s sub">${esc(l.label || '')}</span><span>${lieux().length > 1 ? `<button class="btn small" data-act="lieu-del" data-id="${esc(l.id)}">Retirer</button>` : ''}</span></div>`).join('')}</div>
@@ -2535,8 +2536,7 @@ function renderSettings(){
   <div class="panel"><h3>Mes données</h3>
     <p class="note">${STANDALONE ? 'Vos données restent sur ce téléphone. L\'assistant IA complet (questions libres, analyse des comptes rendus, lecture des photos) est dans la version claude.ai ; les données ne passent pas d\'une version à l\'autre : « Sauvegarder » ici puis « Restaurer » là-bas.' : 'Pour le terrain, installez la version téléphone (GPS, vraie carte, hors connexion) : <a href="https://mybestpair.github.io/copilote-tournee/" target="_blank" rel="noopener">mybestpair.github.io/copilote-tournee</a>. Les données ne passent pas d\'une version à l\'autre : « Sauvegarder » ici puis « Restaurer » là-bas.'}</p>
     <div class="actions"><button class="btn" data-act="tab" data-tab="bilan">Bilan du test</button><button class="btn" data-act="defaults">Valeurs par défaut</button></div></div>
-  ${securityPanel()}
-  ${syncPanel()}`;
+  ${securityPanel()}`;
   $('#restore-file2').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) restoreBackup(f); };
 }
 function saveSettings(){ store.set('cop.settings', state.settings); buildPlan(); dirty(); if (!$('#p-jour').hidden) renderDay(); if (!$('#p-portefeuille').hidden) renderPortfolio(); }
@@ -3114,7 +3114,8 @@ function renderSetup(){
   let body = '';
   if (st.step === 0) body = `<h2>Organisez vos tournées en quelques minutes</h2>
     <p>Répondez à 5 questions : vos lieux, votre semaine, vos visites, votre véhicule, puis vos clients. Le copilote prépare ensuite chaque matin votre tournée et votre agenda de l'année.</p>
-    <p class="note">Tout reste modifiable ensuite dans Réglages. Vos données restent dans ce navigateur.</p>`;
+    <p class="note">Tout reste modifiable ensuite dans Réglages. Vos données restent dans ce navigateur.</p>
+    ${STANDALONE ? '<div class="banner ok"><p><strong>Vous avez déjà un compte Copilote ?</strong> Retrouvez aussitôt vos clients et vos réglages.</p><button class="btn" data-act="acc-login">Me connecter</button></div>' : ''}`;
   if (st.step === 1) body = `<h2>D'où partez-vous ?</h2>
     <div class="grid2">${sField('su-home', 'Votre domicile : commune ou code postal', `<input id="su-home" value="${esc(home?.label || '')}" placeholder="Ex. : 40100 Dax" autocomplete="off">`)}
     ${sField('su-depot', 'Votre dépôt ou agence (facultatif)', `<input id="su-depot" value="${esc(depot?.label || '')}" placeholder="Ex. : 40230 Saint-Vincent-de-Tyrosse" autocomplete="off">`)}
@@ -3527,14 +3528,14 @@ document.addEventListener('click', e => {
   else if (a === 'bilan-csv'){ bilanCsv(); }
   else if (a === 'backup'){ secModal('backup'); }
   else if (a === 'sec'){ secModal(b.dataset.mode); }
-  else if (a === 'sync-start'){ syncStart(); }
-  else if (a === 'sync-join'){ syncJoinModal(); }
+  else if (a === 'acc-signup'){ accModal('signup'); }
+  else if (a === 'acc-login'){ accModal('login'); }
+  else if (a === 'acc-pass'){ accModal('pass'); }
+  else if (a === 'acc-close'){ closeModal('acc-modal'); }
   else if (a === 'sync-now'){ syncNow({ force:true }).then(ok => { if (ok) flash('Synchronisé.'); renderSettings(); }); }
-  else if (a === 'sync-code'){ syncCodeModal(syncCfg()?.code || '', false); }
-  else if (a === 'sync-copy'){ navigator.clipboard?.writeText($('#syncCodeTxt').textContent).then(() => flash('Code copié.'), () => flash('Copie impossible : recopiez-le à la main.')); }
-  else if (a === 'sync-close'){ closeModal('sync-modal'); }
-  else if (a === 'sync-off'){ if (confirm('Arrêter la synchronisation sur cet appareil ? Vos données y restent ; la copie du serveur et vos autres appareils ne changent pas.')){ store.del('cop.sync'); SYNC_KEYS_C = null; renderSettings(); flash('Synchronisation arrêtée sur cet appareil.'); } }
-  else if (a === 'sync-forget'){ if (confirm('Arrêter la synchronisation partout et supprimer la copie chiffrée du serveur ? Les données restent sur chaque appareil.')) syncForget(); }
+  else if (a === 'acc-logout'){ if (confirm('Vous déconnecter sur cet appareil ? Vos données y restent, mais ne seront plus mises à jour.')){ syncNow({ force:true }).finally(() => { store.del('cop.sync'); SYNC_KEYS_C = null; renderSettings(); flash('Déconnecté.'); }); } }
+  else if (a === 'acc-logout-wipe'){ if (confirm('Vous déconnecter et effacer toutes les données de cet appareil ? Elles restent dans votre compte.')){ syncNow({ force:true }).then(ok => { if (!ok && !confirm('La dernière synchronisation a échoué : les modifications récentes de cet appareil seront perdues. Effacer quand même ?')) return; wipeAll(); }); } }
+  else if (a === 'sync-forget'){ if (confirm('Supprimer votre compte et la copie chiffrée du serveur ? Les données restent sur chaque appareil.')) syncForget(); }
   else if (a === 'lock-later'){ state.settings.lockLater = TODAY; store.set('cop.settings', state.settings); closeModal('sec-modal'); flash('D\'accord. Vous pourrez le créer dans Réglages › Sécurité.'); }
   else if (a === 'sec-close'){ closeModal('sec-modal'); RESTORE = null; }
   else if (a === 'lock-now'){ if (lockOn()) lockNow(); }
@@ -3670,7 +3671,7 @@ const SYNC_LOCAL_FIELDS = ['lockDelay', 'lockLater', 'carteEnLigne', 'confidenti
 const SYNC_ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 let SYNC_KEYS_C = null, syncBusy = false, syncTimer = null, syncApplying = false, syncState = { st:'', msg:'' }, syncAgain = false;
 const syncCfg = () => store.get('cop.sync');
-const syncOn = () => !!syncCfg()?.code;
+const syncOn = () => { const c = syncCfg(); return !!(c?.code || c?.mk); };
 function syncSave(c){ store.set('cop.sync', c); }
 function newSyncCode(){ const r = crypto.getRandomValues(new Uint8Array(20)); let s = ''; r.forEach((b, i) => { s += SYNC_ALPHA[b % SYNC_ALPHA.length] + (i % 4 === 3 && i < 19 ? '-' : ''); }); return s; }
 const normCode = c => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
@@ -3697,7 +3698,7 @@ async function syncOpen(key, s){
 // Une donnée synchronisée vient de changer sur cet appareil : on note l'heure et on envoie quelques secondes après
 function syncMark(k){
   if (syncApplying) return;
-  const c = syncCfg(); if (!c?.code) return;
+  const c = syncCfg(); if (!c?.code && !c?.mk) return;
   c.ts = c.ts || {}; c.ts[k] = Date.now(); syncSave(c); syncSoon(3000);
 }
 function syncSoon(ms){ clearTimeout(syncTimer); syncTimer = setTimeout(() => syncNow(), ms); }
@@ -3728,16 +3729,18 @@ async function syncFetch(path, opt = {}){
 }
 function setSyncState(st, msg){ syncState = { st, msg }; const el = $('#syncStatus'); if (el) el.innerHTML = syncStatusHtml(); }
 async function syncNow(opts = {}){
-  const c = syncCfg(); if (!c?.code) return false;
+  const c = syncCfg(); if (!c?.code && !c?.mk) return false;
+  if (c.needLogin && !opts.force) return false;
   if (syncBusy){ syncAgain = true; return false; }
   if (!navigator.onLine){ setSyncState('off', 'Hors connexion : les changements partiront au retour du réseau.'); return false; }
   if (!opts.force && syncBlocked()){ syncSoon(15000); return false; }
   syncBusy = true; setSyncState('busy', 'Synchronisation…');
   try {
     for (let tries = 0; tries < 3; tries++){
-      const K = await syncKeys(c.code), H = { 'x-sync-token':K.tok };
+      const K = await syncKeysFor(c), H = { 'x-sync-token':K.tok };
       const r = await syncFetch(K.id + '?since=' + (c.ver || 0), { headers:H });
-      if (r.status === 403) throw new Error('Code refusé par le serveur.');
+      if (r.status === 403){ c.needLogin = true; syncSave(c); throw new Error(c.email ? 'Reconnectez-vous : le mot de passe a été changé sur un autre appareil.' : 'Code refusé par le serveur.'); }
+      if (r.status === 429) throw new Error('Trop d\'essais : nouvel essai dans quelques minutes.');
       if (r.status !== 200 && r.status !== 404) throw new Error('Serveur indisponible (' + r.status + ').');
       const j = await r.json(), rver = j.ver || 0;
       let remote = null;
@@ -3765,7 +3768,7 @@ async function syncNow(opts = {}){
         c.ver = (await p.json()).ver; c.rts = Object.assign({}, c.ts);
       } else { c.ver = rver; c.rts = Object.assign({}, rts); }
       c.last = Date.now(); syncSave(c);
-      if (changed.length || opts.join) syncReload(opts.join ? 'Données de votre autre appareil récupérées.' : 'Mis à jour depuis votre autre appareil.');
+      if (changed.length || opts.join) syncReload(opts.join ? 'Votre copilote est récupéré.' : 'Mis à jour depuis votre autre appareil.');
       setSyncState('ok', ''); return true;
     }
     throw new Error('Trop de changements simultanés, nouvel essai bientôt.');
@@ -3786,70 +3789,111 @@ function syncReload(msg){
   if (msg) flash(msg);
 }
 function syncStatusHtml(){
-  const c = syncCfg(); if (!c?.code) return '';
+  const c = syncCfg(); if (!c?.code && !c?.mk) return '';
   const ago = c.last ? Math.round((Date.now() - c.last) / 60000) : null;
   const when = ago == null ? 'jamais' : ago < 1 ? 'à l\'instant' : ago < 60 ? `il y a ${ago} min` : `le ${new Date(c.last).toLocaleString('fr-FR', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}`;
   const chip = syncState.st === 'err' ? '<span class="chip late">problème</span>' : syncState.st === 'off' ? '<span class="chip warn">hors connexion</span>' : syncState.st === 'busy' ? '<span class="chip warn">en cours</span>' : '<span class="chip ok">activée</span>';
   return `${chip}Dernière synchronisation : ${when}.${syncState.msg ? ' ' + esc(syncState.msg) : ''}`;
 }
+/* ---------- Compte : adresse e-mail + mot de passe (le mot de passe ne quitte jamais l'appareil) ---------- */
+const normEmail = e => String(e || '').trim().toLowerCase();
+const hexOf = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+const unhex = h => Uint8Array.from(h.match(/../g).map(x => parseInt(x, 16)));
+// Clé maîtresse tirée du mot de passe (PBKDF2, 600 000 tours) : elle chiffre les données ; le serveur ne reçoit qu'un jeton qui en dérive
+async function accountMaster(email, pass){
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveBits']);
+  return hexOf(await crypto.subtle.deriveBits({ name:'PBKDF2', salt:new TextEncoder().encode('copilote-compte|' + normEmail(email)), iterations:600000, hash:'SHA-256' }, base, 256));
+}
+async function keysFromMaster(email, mk){
+  const base = await crypto.subtle.importKey('raw', unhex(mk), 'HKDF', false, ['deriveBits', 'deriveKey']);
+  const salt = new TextEncoder().encode('copilote-sync-v2'), info = t => new TextEncoder().encode(t);
+  const tok = hexOf(await crypto.subtle.deriveBits({ name:'HKDF', hash:'SHA-256', salt, info:info('copilote-auth') }, base, 256));
+  const key = await crypto.subtle.deriveKey({ name:'HKDF', hash:'SHA-256', salt, info:info('copilote-enc') }, base, { name:'AES-GCM', length:256 }, false, ['encrypt', 'decrypt']);
+  const id = hexOf(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('copilote-compte|' + normEmail(email))));
+  return { n:'m:' + mk, id, tok, key };
+}
+async function syncKeysFor(c){ if (c.mk){ if (SYNC_KEYS_C?.n === 'm:' + c.mk) return SYNC_KEYS_C; return SYNC_KEYS_C = await keysFromMaster(c.email, c.mk); } return syncKeys(c.code); }
 function syncPanel(){
-  if (!STANDALONE) return `<div class="panel"><h3>Synchronisation entre appareils</h3><p class="note">Disponible dans la version installable (téléphone et ordinateur) : <a href="https://mybestpair.github.io/copilote-tournee/" target="_blank" rel="noopener">mybestpair.github.io/copilote-tournee</a>.</p></div>`;
-  const on = syncOn();
-  return `<div class="panel" id="syncp"><h3>Synchronisation entre appareils</h3>
-    <p class="note">Retrouvez les mêmes clients, rendez-vous, tâches et comptes rendus sur votre téléphone et votre ordinateur. Tout est chiffré sur l'appareil avec votre code de jumelage avant d'être envoyé : le serveur ne garde qu'un bloc illisible. Les photos restent sur l'appareil où elles ont été prises.</p>
-    ${on ? `<p class="note" id="syncStatus">${syncStatusHtml()}</p>
-      <div class="actions"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button><button class="btn" data-act="sync-code">Afficher le code de jumelage</button><button class="btn" data-act="sync-off">Arrêter sur cet appareil</button></div>
-      <p class="note"><button class="linkbtn danger-link" data-act="sync-forget">Arrêter partout et supprimer la copie chiffrée du serveur</button></p>`
-    : `<div class="actions"><button class="btn primary" data-act="sync-start">Activer (premier appareil)</button><button class="btn" data-act="sync-join">J'ai déjà un code (autre appareil)</button></div>`}
-  </div>`;
+  if (!STANDALONE) return `<div class="panel"><h3>Mon compte</h3><p class="note">Le compte (retrouver son copilote sur tous ses appareils) est dans la version installable : <a href="https://mybestpair.github.io/copilote-tournee/" target="_blank" rel="noopener">mybestpair.github.io/copilote-tournee</a>.</p></div>`;
+  const c = syncCfg();
+  if (c?.email) return `<div class="panel" id="syncp"><h3>Mon compte</h3>
+    <p class="note">Connecté : <strong>${esc(c.email)}</strong>. Vos clients, rendez-vous, tâches et comptes rendus sont les mêmes sur tous les appareils où vous vous connectez. Ils sont chiffrés avec votre mot de passe avant d'être envoyés : le serveur ne garde qu'un bloc illisible. Les photos restent sur l'appareil où elles ont été prises.</p>
+    <p class="note" id="syncStatus">${c.needLogin ? '<span class="chip late">à reconnecter</span>Le mot de passe a changé sur un autre appareil.' : syncStatusHtml()}</p>
+    <div class="actions">${c.needLogin ? '<button class="btn primary" data-act="acc-login">Me reconnecter</button>' : '<button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>'}<button class="btn" data-act="acc-pass">Changer le mot de passe</button></div>
+    <div class="actions"><button class="btn" data-act="acc-logout">Me déconnecter</button><button class="btn danger" data-act="acc-logout-wipe">Me déconnecter et effacer cet appareil</button></div>
+    <p class="note">Sur un ordinateur partagé, utilisez « Me déconnecter et effacer cet appareil ». <button class="linkbtn danger-link" data-act="sync-forget">Supprimer mon compte</button> (vos données restent sur vos appareils).</p></div>`;
+  return `<div class="panel" id="syncp"><h3>Mon compte</h3>
+    <p class="note">Avec un compte (adresse e-mail et mot de passe), vous retrouvez aussitôt votre copilote personnalisé sur votre téléphone, votre ordinateur ou un nouvel appareil, et tout reste à jour entre eux. Vos données sont chiffrées avec votre mot de passe avant de quitter l'appareil : personne d'autre ne peut les lire.</p>
+    ${c?.code ? `<p class="note" id="syncStatus">${syncStatusHtml()} (synchronisation par code)</p>` : ''}
+    <div class="actions"><button class="btn primary" data-act="acc-signup">Créer mon compte</button><button class="btn" data-act="acc-login">J'ai déjà un compte</button></div></div>`;
 }
-function syncCodeModal(code, first){
-  modal('sync-modal', `<h2>${first ? 'Synchronisation activée' : 'Code de jumelage'}</h2>
-    <p>Sur votre autre appareil, ouvrez Réglages › Synchronisation › « J'ai déjà un code », et saisissez :</p>
-    <p class="sync-code num" id="syncCodeTxt">${esc(code)}</p>
-    <p class="note">Ce code est la clé de vos données : <strong>ne l'envoyez pas par e-mail ni par message</strong>, recopiez-le à la main. Gardez-le en lieu sûr : il permet aussi de tout récupérer sur un nouveau téléphone.</p>
-    <div class="actions"><button class="btn" data-act="sync-copy">Copier</button><button class="btn primary" data-act="sync-close">J'ai noté le code</button></div>`, 'Code de jumelage');
-}
-function syncJoinModal(){
-  modal('sync-modal', `<form id="sj-form" autocomplete="off"><h2>Rejoindre la synchronisation</h2>
-    <p class="note">Saisissez le code affiché sur votre premier appareil (Réglages › Synchronisation › « Afficher le code de jumelage »).</p>
-    <div class="field"><label for="sj-code">Code de jumelage</label><input id="sj-code" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"></div>
-    <p class="note"><span class="chip warn">attention</span>Les données actuelles de cet appareil seront remplacées par celles de votre premier appareil.</p>
-    <p class="lock-msg" id="sj-msg" role="alert"></p>
-    <div class="actions"><button class="btn primary" type="submit" id="sj-go">Rejoindre</button><button class="btn" type="button" data-act="sync-close">Annuler</button></div></form>`, 'Rejoindre la synchronisation');
-  setTimeout(() => $('#sj-code')?.focus(), 60);
-  $('#sj-form').onsubmit = async e => {
-    e.preventDefault(); const code = $('#sj-code').value, go = $('#sj-go'), msg = t => { $('#sj-msg').textContent = t; };
-    if (normCode(code).length !== 20) return msg('Le code fait 20 caractères (sans compter les tirets).');
-    go.disabled = true; go.textContent = 'Vérification…'; msg('');
+function accModal(mode){
+  const c = syncCfg() || {}, T = {
+    signup:['Créer mon compte', `<p class="note">Votre mot de passe chiffre vos données : <strong>il ne peut pas être récupéré</strong> s'il est perdu. Choisissez-en un long (10 caractères minimum), différent de vos autres mots de passe, et notez-le en lieu sûr.</p>`
+      + `<div class="field"><label for="ac-mail">Adresse e-mail</label><input id="ac-mail" type="email" autocomplete="username" value="${esc(c.email || '')}"></div>` + pwField('ac-a', 'Mot de passe (10 caractères minimum)', 'new-password') + pwField('ac-b', 'Confirmez le mot de passe', 'new-password'), 'Créer mon compte'],
+    login:['Me connecter', (c.needLogin ? '<p class="note">Entrez votre nouveau mot de passe.</p>' : `<p class="note"><span class="chip warn">attention</span>Les données actuelles de cet appareil seront remplacées par celles de votre compte.</p>`)
+      + `<div class="field"><label for="ac-mail">Adresse e-mail</label><input id="ac-mail" type="email" autocomplete="username" value="${esc(c.email || '')}"></div>` + pwField('ac-a', 'Mot de passe', 'current-password'), 'Me connecter'],
+    pass:['Changer le mot de passe', pwField('ac-o', 'Mot de passe actuel', 'current-password') + pwField('ac-a', 'Nouveau mot de passe (10 caractères minimum)', 'new-password') + pwField('ac-b', 'Confirmez', 'new-password') + '<p class="note">Vos autres appareils vous demanderont de vous reconnecter.</p>', 'Changer']
+  }[mode];
+  modal('acc-modal', `<form id="ac-form" autocomplete="on" novalidate><h2>${T[0]}</h2>${T[1]}<p class="lock-msg" id="ac-msg" role="alert"></p><div class="actions"><button class="btn primary" type="submit" id="ac-go">${T[2]}</button><button class="btn" type="button" data-act="acc-close">Annuler</button></div></form>`, T[0]);
+  setTimeout(() => $('#ac-form input:not([value]), #ac-form input[value=""]')?.focus(), 60);
+  let busy = false;
+  $('#ac-form').onsubmit = async e => {
+    e.preventDefault(); if (busy) return;
+    const v = id => $('#' + id)?.value || '', msg = t => { $('#ac-msg').textContent = t; }, go = $('#ac-go'), label = go.textContent;
+    const email = mode === 'pass' ? c.email : normEmail(v('ac-mail')), a = v('ac-a'), b = v('ac-b');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email || '')) return msg('Adresse e-mail incorrecte.');
+    if (mode !== 'login' && a.length < 10) return msg('Le mot de passe doit faire au moins 10 caractères.');
+    if (mode !== 'login' && a !== b) return msg('Les deux saisies ne sont pas identiques.');
+    if (mode === 'login' && !a) return msg('Entrez votre mot de passe.');
+    if (!navigator.onLine) return msg('Pas de réseau : réessayez avec une connexion.');
+    busy = true; go.disabled = true; go.textContent = 'Un instant…'; msg('');
     try {
-      const K = await syncKeys(code), r = await syncFetch(K.id, { headers:{ 'x-sync-token':K.tok } });
-      if (r.status === 404 || r.status === 403) throw new Error('Aucune donnée pour ce code. Vérifiez-le, ou activez d\'abord la synchronisation sur l\'autre appareil.');
+      if (mode === 'pass'){
+        const old = await keysFromMaster(email, await accountMaster(email, v('ac-o')));
+        const cur = await syncKeysFor(c); if (old.tok !== cur.tok) throw new Error('Mot de passe actuel incorrect.');
+        const mk = await accountMaster(email, a), K = await keysFromMaster(email, mk);
+        await syncNow({ force:true });
+        const data = {}; BACKUP_KEYS.forEach(k => { data[k] = store.get(k); });
+        const c2 = syncCfg(), sealed = await syncSeal(K.key, { data, ts:c2.ts || {}, at:Date.now() });
+        const p = await syncFetch(cur.id, { method:'PUT', headers:{ 'x-sync-token':cur.tok, 'content-type':'application/json' }, body:JSON.stringify({ ver:c2.ver || 0, data:sealed, newTok:K.tok }) });
+        if (!p.ok) throw new Error(p.status === 409 ? 'Une synchronisation était en cours : réessayez.' : 'Serveur indisponible (' + p.status + ').');
+        c2.mk = mk; c2.ver = (await p.json()).ver; c2.rts = Object.assign({}, c2.ts); SYNC_KEYS_C = null; syncSave(c2);
+        closeModal('acc-modal'); flash('Mot de passe changé.'); renderSettings(); return;
+      }
+      const mk = await accountMaster(email, a), K = await keysFromMaster(email, mk);
+      const r = await syncFetch(K.id, { headers:{ 'x-sync-token':K.tok } });
+      if (r.status === 429) throw new Error('Trop d\'essais : patientez quelques minutes.');
+      if (mode === 'signup'){
+        if (r.status === 200 || r.status === 403) throw new Error('Un compte existe déjà avec cette adresse : utilisez « J\'ai déjà un compte ».');
+        if (r.status !== 404) throw new Error('Serveur indisponible (' + r.status + ').');
+        const now = Date.now(), ts = {}; BACKUP_KEYS.forEach(k => { ts[k] = now; });
+        SYNC_KEYS_C = null; syncSave({ email, mk, ver:0, ts, rts:{} });
+        closeModal('acc-modal');
+        if (!await syncNow({ force:true })){ store.del('cop.sync'); SYNC_KEYS_C = null; flash(syncState.msg || 'Création impossible pour l\'instant.'); renderSettings(); return; }
+        flash('Compte créé : connectez-vous avec la même adresse sur vos autres appareils.'); renderSettings(); return;
+      }
+      if (r.status === 404) throw new Error('Aucun compte avec cette adresse. Vérifiez-la, ou créez votre compte.');
+      if (r.status === 403) throw new Error('Adresse e-mail ou mot de passe incorrect.');
       if (!r.ok) throw new Error('Serveur indisponible (' + r.status + ').');
-      syncSave({ code:normCode(code).replace(/(.{4})(?!$)/g, '$1-'), ver:0, ts:{}, rts:{} });
-      closeModal('sync-modal');
-      if (!await syncNow({ force:true, join:true })) throw new Error(syncState.msg || 'Échec');
+      const prev = syncCfg(), same = prev?.email === email;   // reconnexion après un changement de mot de passe : on garde les modifications de cet appareil
+      SYNC_KEYS_C = null; syncSave(same ? Object.assign({}, prev, { mk, needLogin:false }) : { email, mk, ver:0, ts:{}, rts:{} });
+      closeModal('acc-modal');
+      if (same){ if (await syncNow({ force:true })) flash('Reconnecté.'); if (!$('#p-reglages').hidden) renderSettings(); return; }
+      if (!await syncNow({ force:true, join:true })){ store.del('cop.sync'); SYNC_KEYS_C = null; flash(syncState.msg || 'Connexion impossible pour l\'instant.'); }
       if (!$('#p-reglages').hidden) renderSettings();
     } catch (err){
-      if (!$('#sj-msg')){ store.del('cop.sync'); flash(err.message || 'Échec.'); if (!$('#p-reglages').hidden) renderSettings(); return; }
-      msg(err.message || 'Échec.'); go.disabled = false; go.textContent = 'Rejoindre';
+      if ($('#ac-msg')){ msg(err?.message || 'Échec, réessayez.'); go.disabled = false; go.textContent = label; }
+      else flash(err?.message || 'Échec.');
     }
+    busy = false;
   };
 }
-async function syncStart(){
-  const code = newSyncCode(), now = Date.now(), ts = {};
-  BACKUP_KEYS.forEach(k => { ts[k] = now; });
-  syncSave({ code, ver:0, ts, rts:{} });
-  syncCodeModal(code, true);
-  const ok = await syncNow({ force:true });
-  if (!ok){ flash(syncState.msg || 'Première synchronisation impossible pour l\'instant : nouvel essai automatique.'); }
-  if (!$('#p-reglages').hidden) renderSettings();
-}
 async function syncForget(){
-  const c = syncCfg(); if (!c?.code) return;
-  try { const K = await syncKeys(c.code); const r = await syncFetch(K.id, { method:'DELETE', headers:{ 'x-sync-token':K.tok } }); if (!r.ok) throw 0; }
+  const c = syncCfg(); if (!c?.code && !c?.mk) return;
+  try { const K = await syncKeysFor(c); const r = await syncFetch(K.id, { method:'DELETE', headers:{ 'x-sync-token':K.tok } }); if (!r.ok) throw 0; }
   catch { flash('Le serveur ne répond pas : réessayez avec du réseau.'); return; }
-  store.del('cop.sync'); SYNC_KEYS_C = null; flash('Synchronisation arrêtée, copie du serveur supprimée. Arrêtez-la aussi sur vos autres appareils.'); renderSettings();
+  store.del('cop.sync'); SYNC_KEYS_C = null; flash(c.email ? 'Compte supprimé du serveur. Vos données restent sur vos appareils.' : 'Synchronisation arrêtée, copie du serveur supprimée.'); renderSettings();
 }
 // Déclencheurs : ouverture, retour sur l'application, retour du réseau, puis toutes les minutes
 function startSync(){

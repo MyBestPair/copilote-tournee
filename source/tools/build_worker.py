@@ -26,8 +26,14 @@ async function api(req, env, id){
   if (req.method === 'OPTIONS') return new Response(null, { status:204, headers:H });
   const origin = req.headers.get('origin'); if (origin && !ORIGINS.includes(origin)) return out({ error:'origine refusée' }, 403);
   const tok = req.headers.get('x-sync-token') || ''; if (!/^[a-f0-9]{64}$/.test(tok)) return out({ error:'jeton manquant' }, 401);
-  const db = env.DB, row = await db.prepare('SELECT ver, tok, data, updated FROM boxes WHERE id = ?').bind(id).first(), th = await sha(tok);
-  if (row && row.tok !== th) return out({ error:'jeton refusé' }, 403);
+  const db = env.DB, row = await db.prepare('SELECT ver, tok, data, updated, fails, until FROM boxes WHERE id = ?').bind(id).first(), th = await sha(tok), now = Date.now();
+  if (row && row.until > now) return out({ error:'trop d’essais', retry:Math.ceil((row.until - now) / 1000) }, 429);
+  if (row && row.tok !== th){   // mauvais mot de passe : au-delà de 5 essais, attente qui double à chaque échec (1 min, 2 min… 1 h)
+    const fails = (row.fails || 0) + 1, until = fails >= 5 ? now + Math.min(3600000, 60000 * 2 ** (fails - 5)) : 0;
+    await db.prepare('UPDATE boxes SET fails = ?, until = ? WHERE id = ?').bind(fails, until, id).run();
+    return out({ error:'jeton refusé' }, 403);
+  }
+  if (row && row.fails) await db.prepare('UPDATE boxes SET fails = 0, until = 0 WHERE id = ?').bind(id).run();
   if (req.method === 'GET'){
     if (!row) return out({ ver:0 }, 404);
     const since = +new URL(req.url).searchParams.get('since');
@@ -38,14 +44,15 @@ async function api(req, env, id){
     const txt = await req.text(); if (txt.length > MAXB) return out({ error:'trop volumineux' }, 413);
     let b; try { b = JSON.parse(txt); } catch { return out({ error:'format' }, 400); }
     if (typeof b.data !== 'string' || !Number.isInteger(b.ver)) return out({ error:'format' }, 400);
-    const now = Date.now();
+    if (b.newTok !== undefined && !/^[a-f0-9]{64}$/.test(b.newTok)) return out({ error:'format' }, 400);
     if (!row){
       if (b.ver !== 0) return out({ ver:0, conflict:true }, 409);
       await db.prepare('INSERT INTO boxes (id, tok, ver, data, updated) VALUES (?, ?, 1, ?, ?)').bind(id, th, b.data, now).run();
       return out({ ver:1 });
     }
     if (b.ver !== row.ver) return out({ ver:row.ver, conflict:true }, 409);
-    const r = await db.prepare('UPDATE boxes SET ver = ver + 1, data = ?, updated = ? WHERE id = ? AND ver = ?').bind(b.data, now, id, row.ver).run();
+    const r = b.newTok ? await db.prepare('UPDATE boxes SET ver = ver + 1, data = ?, updated = ?, tok = ? WHERE id = ? AND ver = ?').bind(b.data, now, await sha(b.newTok), id, row.ver).run()
+      : await db.prepare('UPDATE boxes SET ver = ver + 1, data = ?, updated = ? WHERE id = ? AND ver = ?').bind(b.data, now, id, row.ver).run();
     if (!r.meta.changes) return out({ conflict:true }, 409);
     return out({ ver:row.ver + 1 });
   }
