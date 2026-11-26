@@ -443,6 +443,7 @@ details.fold:not([open]) > summary{border-bottom:0}
 .list.places .row > strong{grid-column:1;grid-row:1}
 .list.places .row > .sub{grid-column:1;grid-row:2;font-size:.85rem;color:var(--muted)}
 .list.places .row > .actions{grid-column:2;grid-row:1 / span 2;flex-wrap:nowrap;gap:6px}
+.acc-strip{background:var(--route-soft);border-bottom-color:var(--route)}
 .lock-strip{background:color-mix(in srgb,var(--alert) 10%,var(--surface));border-bottom-color:var(--alert);color:var(--ink)}
 .panel h4{font-family:var(--display);font-size:1.15rem;letter-spacing:.02em;margin:10px 0 0;padding-top:10px;border-top:1px solid var(--line)}
 body.locked > *:not(#lock){display:none !important}
@@ -476,6 +477,7 @@ body.locked > *:not(#lock){display:none !important}
 </header>
 
 <div class="demo-strip lock-strip" id="lockStrip" hidden><div class="inner"><span>🔒 Vos clients ne sont pas protégés par un code.</span><button class="linkbtn" data-act="sec" data-mode="set">Créer mon code</button></div></div>
+<div class="demo-strip acc-strip" id="accStrip" hidden><div class="inner"><span>Retrouvez ce copilote sur votre téléphone et votre ordinateur.</span><button class="linkbtn" data-act="acc-signup">Créer mon compte</button><button class="linkbtn" data-act="acc-login">J'ai déjà un compte</button><button class="linkbtn" data-act="acc-later" aria-label="Plus tard">Plus tard</button></div></div>
 <div class="demo-strip" id="demoStrip" hidden><div class="inner"><span>Exemple fictif : ces clients sont inventés.</span><button class="linkbtn" data-act="go-import">Importer mes clients</button></div></div>
 <nav class="tabs" aria-label="Sections">
   <div class="inner" role="tablist">
@@ -2587,6 +2589,7 @@ function renderSettings(){
     <div class="actions"><button class="btn" data-act="tab" data-tab="bilan">Bilan du test</button><button class="btn" data-act="defaults">Valeurs par défaut</button></div></div>
   ${securityPanel()}`;
   $('#restore-file2').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) restoreBackup(f); };
+  lockUi();
 }
 function saveSettings(){ store.set('cop.settings', state.settings); buildPlan(); dirty(); if (!$('#p-jour').hidden) renderDay(); if (!$('#p-portefeuille').hidden) renderPortfolio(); }
 
@@ -3593,6 +3596,7 @@ document.addEventListener('click', e => {
   else if (a === 'backup'){ secModal('backup'); }
   else if (a === 'sec'){ secModal(b.dataset.mode); }
   else if (a === 'acc-signup'){ accModal('signup'); }
+  else if (a === 'acc-later'){ state.settings.accLater = TODAY; store.set('cop.settings', state.settings); lockUi(); }
   else if (a === 'acc-login'){ accModal('login'); }
   else if (a === 'acc-pass'){ accModal('pass'); }
   else if (a === 'acc-close'){ closeModal('acc-modal'); }
@@ -3731,12 +3735,12 @@ document.addEventListener('change', e => {
    Le serveur ne reçoit qu'un bloc chiffré, illisible pour lui. Les photos ne sont pas synchronisées.
    ============================================================ */
 const SYNC_URL = 'https://copilote-tournee.studio-conseiller.workers.dev/api/sync/';
-const SYNC_LOCAL_FIELDS = ['lockDelay', 'lockLater', 'carteEnLigne', 'confidentiel'];   // réglages propres à chaque appareil
+const SYNC_LOCAL_FIELDS = ['lockDelay', 'lockLater', 'accLater', 'carteEnLigne', 'confidentiel'];   // réglages propres à chaque appareil
 const SYNC_ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 let SYNC_KEYS_C = null, syncBusy = false, syncTimer = null, syncApplying = false, syncState = { st:'', msg:'' }, syncAgain = false;
 const syncCfg = () => store.get('cop.sync');
 const syncOn = () => { const c = syncCfg(); return !!(c?.code || c?.mk); };
-function syncSave(c){ store.set('cop.sync', c); }
+function syncSave(c){ store.set('cop.sync', c); if (state) lockUi(); }
 function newSyncCode(){ const r = crypto.getRandomValues(new Uint8Array(20)); let s = ''; r.forEach((b, i) => { s += SYNC_ALPHA[b % SYNC_ALPHA.length] + (i % 4 === 3 && i < 19 ? '-' : ''); }); return s; }
 const normCode = c => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
 async function syncKeys(code){
@@ -3789,7 +3793,9 @@ function applyKey(k, v){
 }
 async function syncFetch(path, opt = {}){
   const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 15000);
-  try { return await fetch(SYNC_URL + path, { ...opt, signal:ctl.signal, cache:'no-store' }); } finally { clearTimeout(to); }
+  try { return await fetch(SYNC_URL + path, { ...opt, signal:ctl.signal, cache:'no-store' }); }
+  catch { throw new Error('Le serveur des comptes est injoignable depuis ce réseau (un réseau d\'entreprise peut le bloquer). Essayez avec la 4G ou un autre réseau.'); }
+  finally { clearTimeout(to); }
 }
 function setSyncState(st, msg){ syncState = { st, msg }; const el = $('#syncStatus'); if (el) el.innerHTML = syncStatusHtml(); }
 async function syncNow(opts = {}){
@@ -3837,7 +3843,7 @@ async function syncNow(opts = {}){
     }
     throw new Error('Trop de changements simultanés, nouvel essai bientôt.');
   } catch (e){
-    setSyncState('err', e?.name === 'AbortError' ? 'Le serveur ne répond pas (réseau bloqué ?).' : (e?.message || 'Échec de la synchronisation.'));
+    setSyncState('err', e?.message || 'Échec de la synchronisation.');
     return false;
   } finally {
     syncBusy = false;
@@ -4015,7 +4021,8 @@ function applyConf(){
   if (state.cr) renderCr();
   refreshScreen();
 }
-function lockUi(){ $('#lockBtn').hidden = !lockOn(); $('#lockStrip').hidden = lockOn() || !S().setupDone; }
+function lockUi(){ $('#lockBtn').hidden = !lockOn(); $('#lockStrip').hidden = lockOn() || !S().setupDone;
+  $('#accStrip').hidden = !STANDALONE || !S().setupDone || syncOn() || S().accLater === TODAY || !$('#lockStrip').hidden; }
 // Le code est proposé à la fin de la configuration, puis chaque jour tant qu'il n'est pas créé
 function askLock(){ if (lockOn() || !S().setupDone || S().lockLater === TODAY || document.querySelector('.modal')) return; secModal('set', true); }
 async function startCapabilities(){
