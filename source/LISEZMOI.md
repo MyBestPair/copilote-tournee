@@ -38,3 +38,10 @@ Aucune donnée de client ne passe par le serveur : tout reste dans le navigateur
 - Mot de passe perdu = données du compte illisibles (elles restent sur les appareils déjà connectés). Changement de mot de passe : rechiffrement + nouveau jeton (`newTok`), les autres appareils demandent de se reconnecter.
 - Après 5 mauvais mots de passe, attente de 1 min qui double à chaque échec (max 1 h) : colonnes `fails` et `until`.
 - Connexion possible dès le premier écran de la configuration ; « Me déconnecter et effacer cet appareil » pour un ordinateur partagé.
+
+## Adresses précises (26 nov. 2026)
+- Avant : chaque contact et chaque lieu étaient placés au centre de leur commune (avec un petit décalage). Désormais : Base Adresse Nationale via la Géoplateforme de l'IGN (`https://data.geopf.fr/geocodage/search`, sans clé, 50 requêtes/s), 5 requêtes à la fois, après chaque import, au démarrage pour les adresses pas encore placées, et à chaque modification d'adresse dans une fiche.
+- Seules l'adresse, le code postal et la commune sont envoyés (jamais le nom). Résultat rejeté si score trop faible ou autre département. Champ `geo` du contact : adresse / rue / lieu-dit / commune / gps ; `geoTried` évite de redemander une adresse introuvable.
+- Lié au réglage « Vraie carte, trajets routiers et adresses précises » (sinon : centre de la commune, rien ne sort de l'appareil).
+- Correction sur place : « Je suis chez ce client » (fiche) et « J'y suis » (lieux) enregistrent la position GPS.
+- Lieux : adresse complète (configuration guidée et Réglages), bouton « Modifier ».

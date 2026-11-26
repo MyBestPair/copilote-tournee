@@ -439,6 +439,10 @@ details.fold:not([open]) > summary{border-bottom:0}
 
 @media (prefers-reduced-motion:no-preference){.stop,.msg{animation:in .25s ease-out}@keyframes in{from{transform:translateY(4px)}to{transform:none}}}
 .sync-code{font-family:var(--display);font-size:1.7rem;letter-spacing:.06em;text-align:center;background:var(--route-soft);color:var(--route);border-radius:10px;padding:12px 8px;margin:4px 0;word-break:break-word;user-select:all}
+.list.places .row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:center}
+.list.places .row > strong{grid-column:1;grid-row:1}
+.list.places .row > .sub{grid-column:1;grid-row:2;font-size:.85rem;color:var(--muted)}
+.list.places .row > .actions{grid-column:2;grid-row:1 / span 2;flex-wrap:nowrap;gap:6px}
 .lock-strip{background:color-mix(in srgb,var(--alert) 10%,var(--surface));border-bottom-color:var(--alert);color:var(--ink)}
 .panel h4{font-family:var(--display);font-size:1.15rem;letter-spacing:.02em;margin:10px 0 0;padding-top:10px;border-top:1px solid var(--line)}
 body.locked > *:not(#lock){display:none !important}
@@ -2237,15 +2241,79 @@ async function applyImport(){
       freq: parseFreq(g(r,'freq')), prio: parsePrio(g(r,'prio')), note:g(r,'note'), lat, lng, approx, duree: parseInt(g(r,'duree')) || null, chantier: chantierFrom(g(r,'chantier')) });
   });
   if (!out.length) return alertMsg("Aucune ligne importée : vérifiez la colonne « Entreprise ».");
-  if (opts.mode === 'add' && state.source === 'import') return mergeImport(out);
+  if (opts.mode === 'add' && state.source === 'import'){ const r = mergeImport(out); if (geoAllowed()) setTimeout(() => geocodeAll(true), 300); return r; }
   state.contacts = out; state.source = 'import'; state.importedAt = isoLocal(today0()); state.imp = null; state.selected = null; pdfRead = null;
   state.plan = null; state.impact = null; store.del('cop.plan');
   state.rdv = []; store.set('cop.rdv', []); state.log = []; store.del('cop.visites'); state.viewDate = TODAY;
   saveContacts(); buildPlan(); renderAll();
   const nUn = out.filter(c => !located(c)).length;
   if (state.wizardReturn){ state.wizardReturn = false; showSetup(5); return; }
-  state.pfMsg = `${out.length} contacts importés. Sur la carte : ${how.gps ? how.gps + ' par leurs coordonnées GPS, ' : ''}${how.commune} au centre de leur commune${how.cp + how.approx ? ', ' + (how.cp + how.approx) + ' à quelques km près (ajoutez le code postal dans votre fichier pour plus de précision)' : ''}${nUn ? ', ' + nUn + ' à localiser (ville ou code postal manquant ou inconnu)' : ''}. Votre tournée et votre agenda sont prêts. Réglez maintenant le nombre de visites par client dans « Plan de visites ».`;
+  if (geoAllowed() && out.some(needGeo)) setTimeout(() => geocodeAll(true), 300);
+  state.pfMsg = `${out.length} contacts importés. Sur la carte : ${how.gps ? how.gps + ' par leurs coordonnées GPS, ' : ''}${how.commune} au centre de leur commune${how.cp + how.approx ? ', ' + (how.cp + how.approx) + ' à quelques km près' : ''}${geoAllowed() && out.some(needGeo) ? ' ; placement précis des adresses en cours…' : ''}${nUn ? ', ' + nUn + ' à localiser (ville ou code postal manquant ou inconnu)' : ''}. Votre tournée et votre agenda sont prêts. Réglez maintenant le nombre de visites par client dans « Plan de visites ».`;
   renderPortfolio();
+}
+/* ---------- Adresses précises : Base Adresse Nationale (service public de l'IGN, Géoplateforme) ----------
+   Seule l'adresse part (rue, code postal, commune), jamais le nom du client. Sans réseau ou si la carte en ligne est coupée : centre de la commune. */
+const GEO_URL = 'https://data.geopf.fr/geocodage/search';
+const geoAllowed = () => STANDALONE && MAPON() && navigator.onLine;
+const GEO_LEVEL = { adresse:'au numéro près', rue:'à la rue', 'lieu-dit':'au lieu-dit', commune:'au centre de la commune', gps:'position GPS relevée sur place', manuel:'position relevée sur place' };
+async function geocodeAddr(adresse, cp, ville){
+  const q = [adresse, cp, ville].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(); if (q.length < 3) return null;
+  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 9000);
+  try {
+    const r = await fetch(GEO_URL + '?index=address&limit=1&q=' + encodeURIComponent(q.slice(0, 200)) + (/^\d{5}$/.test(cp || '') ? '&postcode=' + cp : ''), { signal:ctl.signal });
+    if (!r.ok) return null;
+    const f = (await r.json()).features?.[0]; if (!f?.geometry?.coordinates) return null;
+    const p = f.properties || {}, [lng, lat] = f.geometry.coordinates;
+    const level = p.type === 'housenumber' ? 'adresse' : p.type === 'street' ? 'rue' : p.type === 'locality' ? 'lieu-dit' : 'commune';
+    if ((p.score || 0) < (level === 'commune' ? 0.3 : 0.45) || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    if (cp && p.postcode && p.postcode.slice(0, 2) !== cp.slice(0, 2)) return null;   // autre département : on n'y croit pas
+    return { lat, lng, level, label:p.label || q };
+  } catch { return null; } finally { clearTimeout(to); }
+}
+const geoKey = c => [c.adresse, c.cp, c.ville].map(x => String(x || '').trim().toLowerCase()).join('|');
+const needGeo = c => c && (c.adresse || '').trim() && !['adresse', 'gps', 'manuel'].includes(c.geo) && c.geoTried !== geoKey(c);
+let GEO_BUSY = false;
+// Place précisément tous les contacts qui ne le sont pas encore (5 à la fois), puis recalcule la tournée si elle n'a pas commencé
+async function geocodeAll(showMsg){
+  if (GEO_BUSY || !geoAllowed()) return 0;
+  const todo = state.contacts.filter(needGeo); if (!todo.length) return 0;
+  GEO_BUSY = true; let done = 0, better = 0, i = 0;
+  const step = () => { if (showMsg && !$('#p-portefeuille').hidden){ state.pfMsg = `Placement des adresses sur la carte : ${done} / ${todo.length}…`; renderPortfolio(); } };
+  try {
+    await Promise.all([0, 1, 2, 3, 4].map(async () => {
+      while (i < todo.length){
+        const c = todo[i++], key = geoKey(c), g = await geocodeAddr(c.adresse, c.cp, c.ville);
+        if (geoKey(c) === key){ c.geoTried = key; if (g && g.level !== 'commune'){ c.lat = g.lat; c.lng = g.lng; c.approx = false; c.geo = g.level; better++; } }
+        done++; if (done % 10 === 0) step();
+      }
+    }));
+  } finally { GEO_BUSY = false; }
+  saveContacts();
+  if (better && state.plan && !(state.plan.stops || []).some(s => s.done || s.arrivedAt != null)) buildPlan();
+  if (showMsg){ const rest = state.contacts.filter(c => located(c) && c.approx).length; state.pfMsg = `${better} adresse${better > 1 ? 's' : ''} placée${better > 1 ? 's' : ''} précisément sur la carte.${rest ? ` ${rest} reste${rest > 1 ? 'nt' : ''} au centre de leur commune (adresse absente ou introuvable) : ouvrez la fiche pour corriger l'adresse, ou touchez « Je suis chez ce client » une fois sur place.` : ''}`; }
+  refreshScreen(); if (!$('#p-portefeuille').hidden) renderPortfolio();
+  return better;
+}
+// Un lieu (domicile, dépôt…) : adresse complète si possible, sinon commune
+async function placeFromText(t){
+  t = String(t || '').trim(); if (!t) return null;
+  const cp = cleanCp((t.match(/\b\d{5}\b/) || [''])[0]);
+  if (geoAllowed()){ const g = await geocodeAddr(t, '', ''); if (g && (g.level !== 'commune' || !/\d/.test(t.replace(/\b\d{5}\b/, '')))) return { label:t, lat:g.lat, lng:g.lng, geo:g.level }; }
+  await loadCommunes();
+  const ville = t.replace(/\b\d{5}\b/, '').replace(/^.*,\s*/, '').trim() || t, L = locate(cp, ville) || locate(cp, t);
+  return L ? { label:t, lat:L.p[0], lng:L.p[1], geo:'commune' } : null;
+}
+// Position GPS du téléphone, pour un client ou un lieu où l'on se trouve
+function gpsHere(){
+  return new Promise((ok, ko) => { if (!navigator.geolocation) return ko(new Error('Position indisponible sur cet appareil.'));
+    navigator.geolocation.getCurrentPosition(p => ok({ lat:p.coords.latitude, lng:p.coords.longitude, acc:Math.round(p.coords.accuracy) }), () => ko(new Error('Position refusée ou indisponible : autorisez la localisation.')), { enableHighAccuracy:true, timeout:15000, maximumAge:0 }); });
+}
+async function gpsForContact(id){
+  const c = byId(id); if (!c) return;
+  try { const g = await gpsHere(); if (g.acc > 150 && !confirm(`La position n'est précise qu'à ${g.acc} m près. L'enregistrer quand même ?`)) return;
+    c.lat = g.lat; c.lng = g.lng; c.approx = false; c.geo = 'gps'; c.geoTried = geoKey(c); saveContacts(); refreshScreen(); if (state.fiche) renderFiche(); flash(`Position de ${c.nom} enregistrée (à ${g.acc} m près).`);
+  } catch (e){ flash(e.message); }
 }
 // Ajout au portefeuille existant : un contact déjà présent (même nom, même commune) est complété, pas dupliqué
 const dupKey = c => norm(c.nom) + '|' + (c.cp || normTown(c.ville));
@@ -2497,10 +2565,10 @@ function renderSettings(){
   ${syncPanel()}
   <div class="panel"><h3>Mes lieux de départ et d'arrivée</h3>
     <p class="note">Domicile, dépôt, agence, hôtel… Chaque jour, vous pouvez partir de l'un et finir à un autre (écran Tournée, « Modifier »).</p>
-    <div class="list places">${lieux().map(l => `<div class="row"><strong>${esc(l.nom)}</strong><span class="hide-s sub">${esc(l.label || '')}</span><span>${lieux().length > 1 ? `<button class="btn small" data-act="lieu-del" data-id="${esc(l.id)}">Retirer</button>` : ''}</span></div>`).join('')}</div>
-    <div class="grid2" style="align-items:end"><div class="field"><label for="l-nom">Nom du lieu</label><input id="l-nom" placeholder="Ex. : Dépôt, Agence de Pau, Hôtel…"></div>
-      <div class="field"><label for="l-ou">Commune ou code postal</label><input id="l-ou" placeholder="Ex. : 40100 Dax"></div>
-      <div class="actions"><button class="btn primary" data-act="lieu-add">Ajouter ce lieu</button></div></div>
+    <div class="list places">${lieux().map(l => `<div class="row"><strong>${esc(l.nom)}</strong><span class="sub">${esc(l.label || '')}${l.geo && l.geo !== 'commune' ? '' : ' <span class="chip warn">centre de la commune</span>'}</span><span class="actions"><button class="btn small" data-act="lieu-edit" data-id="${esc(l.id)}">Modifier</button>${lieux().length > 1 ? `<button class="btn small" data-act="lieu-del" data-id="${esc(l.id)}">Retirer</button>` : ''}</span></div>`).join('')}</div>
+    ${(() => { const e = state.lieuEdit && placeById(state.lieuEdit); return `<div class="grid2" style="align-items:end"><div class="field"><label for="l-nom">Nom du lieu</label><input id="l-nom" placeholder="Ex. : Dépôt, Agence de Pau, Hôtel…" value="${esc(e ? e.nom : '')}"></div>
+      <div class="field"><label for="l-ou">Adresse complète</label><input id="l-ou" placeholder="Ex. : 12 rue des Carmes 40100 Dax" value="${esc(e ? e.label : '')}" autocomplete="street-address"></div>
+      <div class="actions"><button class="btn primary" data-act="lieu-add">${e ? 'Enregistrer' : 'Ajouter ce lieu'}</button>${STANDALONE ? `<button class="btn" data-act="lieu-gps">📍 J'y suis</button>` : ''}${e ? '<button class="btn" data-act="lieu-cancel">Annuler</button>' : ''}</div></div>`; })()}
     <p class="note" id="l-msg"></p>
     <div class="grid2"><div class="field"><label for="s-depart">Départ habituel</label><select id="s-depart">${lieux().map(l => `<option value="${esc(l.id)}" ${(s.depart || 'home') === l.id ? 'selected' : ''}>${esc(l.nom)}</option>`).join('')}</select></div>
       <div class="field"><label for="s-retour">Retour habituel</label><select id="s-retour"><option value="same" ${(s.retour || 'same') === 'same' ? 'selected' : ''}>Même lieu que le départ</option>${lieux().map(l => `<option value="${esc(l.id)}" ${s.retour === l.id ? 'selected' : ''}>${esc(l.nom)}</option>`).join('')}</select></div></div>
@@ -2905,12 +2973,13 @@ function renderFiche(){
         ${located(c) ? `<a class="btn" href="${wazeUrl(c)}" target="_blank" rel="noopener">Waze</a>` : ''}
         ${inPlan ? '' : `<button class="btn" data-act="fi-today">Ajouter aujourd'hui</button>`}
         <button class="btn" data-act="fi-rdv">Rendez-vous…</button>
+        ${STANDALONE ? `<button class="btn" data-act="fi-gps" data-id="${c0.id}" title="Enregistre votre position actuelle comme adresse de ce contact">📍 Je suis chez ce client</button>` : ''}
         <button class="btn" data-act="cr-open" data-id="${c0.id}">Compte rendu</button>
       </div>
       <dl class="fiche-info">
         ${c0.tel ? `<dt>Téléphone</dt><dd class="tel">${esc(c0.tel)}</dd>` : ''}
         ${c0.email ? `<dt>E-mail</dt><dd>${esc(c0.email)}</dd>` : ''}
-        <dt>Adresse</dt><dd>${esc([c0.adresse, ((c0.cp || '') + ' ' + (c0.ville || '')).trim()].filter(Boolean).join(', ') || '—')}${!located(c0) ? ' <span class="chip late">pas sur la carte</span>' : c0.approx ? ' <span class="note">(position à quelques km près)</span>' : ''}</dd>
+        <dt>Adresse</dt><dd>${esc([c0.adresse, ((c0.cp || '') + ' ' + (c0.ville || '')).trim()].filter(Boolean).join(', ') || '—')}${!located(c0) ? ' <span class="chip late">pas sur la carte</span>' : c0.geo && !c0.approx ? ` <span class="note">(sur la carte : ${esc(GEO_LEVEL[c0.geo] || '')})</span>` : c0.approx ? ' <span class="note">(position à quelques km près)</span>' : ''}</dd>
         ${c.surChantier ? `<dt>Chantier</dt><dd><span class="chip chantier">en cours</span> ${esc(ch.adresse ? ch.adresse + ', ' : '')}${esc(ch.ville)}${ch.au ? ' jusqu\'au ' + esc(frDate(ch.au)) : ''}</dd>` : ''}
         <dt>Dernière visite</dt><dd>${c0.derniere ? `${esc(frDate(c0.derniere))} (il y a ${d} j)` : 'jamais'}</dd>
         <dt>Prochaine visite</dt><dd>${inPlan ? 'aujourd\'hui' : nv ? esc(shortDay(nv)) : '—'}</dd>
@@ -2946,11 +3015,16 @@ async function saveFiche(){
   const c = byId(state.fiche.id), v = id => ($('#fe-' + id)?.value ?? '').trim(), err = t => { $('#fe-err').textContent = t; };
   if (!v('nom')){ err('Le nom de l\'entreprise est obligatoire.'); return; }
   await loadCommunes();
-  const cp = cleanCp(v('cp')), ville = v('ville');
-  if (cp !== (c.cp || '') || ville !== (c.ville || '')){
-    const L = locate(cp, ville);
-    if (!L && (cp || ville)){ err('Commune introuvable : vérifiez la ville ou le code postal.'); return; }
-    if (L){ c.lat = L.p[0] + (Math.random() - 0.5)*0.004; c.lng = L.p[1] + (Math.random() - 0.5)*0.006; c.approx = true; }
+  const cp = cleanCp(v('cp')), ville = v('ville'), adr = v('adresse');
+  if (cp !== (c.cp || '') || ville !== (c.ville || '') || adr !== (c.adresse || '') || (state.fiche.nouveau && !located(c))){
+    const g = adr && geoAllowed() ? await geocodeAddr(adr, cp, ville) : null;
+    if (g && g.level !== 'commune'){ c.lat = g.lat; c.lng = g.lng; c.approx = false; c.geo = g.level; }
+    else {
+      const L = locate(cp, ville);
+      if (!L && (cp || ville)){ err('Commune introuvable : vérifiez la ville ou le code postal.'); return; }
+      if (L){ c.lat = L.p[0] + (Math.random() - 0.5)*0.004; c.lng = L.p[1] + (Math.random() - 0.5)*0.006; c.approx = true; c.geo = 'commune'; }
+    }
+    c.geoTried = [adr, cp, ville].map(x => String(x || '').trim().toLowerCase()).join('|');
   }
   const t = v('ch');
   if (t){ const pl = findPlace(t); if (!pl || pl.id){ err('Commune du chantier introuvable.'); return; }
@@ -3098,7 +3172,7 @@ function renderSetup(){
     <p class="note">Tout reste modifiable ensuite dans Réglages. Vos données restent dans ce navigateur.</p>
     ${STANDALONE ? '<div class="banner ok"><p><strong>Vous avez déjà un compte Copilote ?</strong> Retrouvez aussitôt vos clients et vos réglages.</p><button class="btn" data-act="acc-login">Me connecter</button></div>' : ''}`;
   if (st.step === 1) body = `<h2>D'où partez-vous ?</h2>
-    <div class="grid2">${sField('su-home', 'Votre domicile : commune ou code postal', `<input id="su-home" value="${esc(home?.label || '')}" placeholder="Ex. : 40100 Dax" autocomplete="off">`)}
+    <div class="grid2">${sField('su-home', 'Votre domicile : adresse complète', `<input id="su-home" value="${esc(home?.label || '')}" placeholder="Ex. : 40100 Dax" autocomplete="off">`)}
     ${sField('su-depot', 'Votre dépôt ou agence (facultatif)', `<input id="su-depot" value="${esc(depot?.label || '')}" placeholder="Ex. : 40230 Saint-Vincent-de-Tyrosse" autocomplete="off">`)}
     ${sField('su-depart', 'Vous partez le plus souvent', `<select id="su-depart"><option value="home" ${(s.depart || 'home') === 'home' ? 'selected' : ''}>de chez vous</option><option value="depot" ${s.depart === 'depot' ? 'selected' : ''}>du dépôt</option></select>`)}
     ${sField('su-retour', 'Et vous finissez', `<select id="su-retour"><option value="same" ${(s.retour || 'same') === 'same' ? 'selected' : ''}>au même endroit</option><option value="home" ${s.retour === 'home' ? 'selected' : ''}>chez vous</option><option value="depot" ${s.retour === 'depot' ? 'selected' : ''}>au dépôt</option></select>`)}</div>
@@ -3159,12 +3233,12 @@ async function saveSetupStep(){
   const st = state.setup, s = state.settings, v = id => $('#' + id)?.value;
   if (st.step === 1){
     await loadCommunes();
-    const geo = t => { const cp = cleanCp((t.match(/\b\d{5}\b/) || [''])[0]), ville = t.replace(/\b\d{5}\b/, '').trim() || t; const L = locate(cp, ville); return L ? { label:t, lat:L.p[0], lng:L.p[1] } : null; };
+    const geo = t => placeFromText(t);
     const ht = v('su-home').trim(), dt = v('su-depot').trim();
-    if (!ht) return 'Indiquez la commune ou le code postal de votre domicile.';
-    const hp = geo(ht); if (!hp) return 'Commune du domicile introuvable : vérifiez l\'orthographe ou ajoutez le code postal.';
+    if (!ht) return 'Indiquez l\'adresse de votre domicile (au moins la commune).';
+    const hp = await geo(ht); if (!hp) return 'Commune du domicile introuvable : vérifiez l\'orthographe ou ajoutez le code postal.';
     const lieuxN = [{ id:'home', nom:'Domicile', ...hp }];
-    if (dt){ const dp = geo(dt); if (!dp) return 'Commune du dépôt introuvable : vérifiez l\'orthographe ou ajoutez le code postal.'; lieuxN.push({ id:'depot', nom:'Dépôt', ...dp }); }
+    if (dt){ const dp = await geo(dt); if (!dp) return 'Commune du dépôt introuvable : vérifiez l\'orthographe ou ajoutez le code postal.'; lieuxN.push({ id:'depot', nom:'Dépôt', ...dp }); }
     const others = (s.lieux || []).filter(l => l.id !== 'home' && l.id !== 'depot');
     s.lieux = lieuxN.concat(others); s.homeTown = ht; s.homeLat = hp.lat; s.homeLng = hp.lng;
     s.depart = v('su-depart') === 'depot' && dt ? 'depot' : 'home';
@@ -3302,8 +3376,8 @@ function securityPanel(){
     <label class="daychk" style="align-self:flex-start"><input type="checkbox" id="o-conf" ${c ? 'checked' : ''}> <strong>Mode confidentiel</strong></label>
     <p class="note">${c ? 'Activé : vos clients, notes et photos ne quittent pas cet appareil. L\'assistant répond sur place, sans IA en ligne ; pas de dictée ni de lecture des photos. Seuls la carte (si elle est activée ci-dessous) et les boutons Waze et Maps utilisent des positions, jamais de noms' + (syncOn() ? ' ; la synchronisation n\'envoie que des données chiffrées, illisibles pour le serveur.' : '.')
       : 'Désactivé : ' + (STANDALONE ? 'la dictée peut passer par le service vocal du navigateur.' : 'les questions, comptes rendus, photos et PDF que vous confiez à l\'assistant sont envoyés à l\'IA de votre compte Claude.')}</p>
-    ${STANDALONE ? `<label class="daychk" style="align-self:flex-start"><input type="checkbox" id="o-map" ${MAPON() ? 'checked' : ''}> <strong>Vraie carte et trajets routiers</strong></label>
-    <p class="note">${MAPON() ? 'Activé : la carte OpenStreetMap s\'affiche directement dans Tournée. Seules les positions des arrêts partent vers OpenStreetMap et OSRM (calcul des trajets), jamais les noms, téléphones ni notes de vos clients.' : 'Désactivé : carte schématique et distances estimées, rien ne sort de l\'appareil.'}</p>` : ''}
+    ${STANDALONE ? `<label class="daychk" style="align-self:flex-start"><input type="checkbox" id="o-map" ${MAPON() ? 'checked' : ''}> <strong>Vraie carte, trajets routiers et adresses précises</strong></label>
+    <p class="note">${MAPON() ? 'Activé : la carte OpenStreetMap s\'affiche directement dans Tournée, et chaque adresse est placée au numéro près grâce à la Base Adresse Nationale (service public de l\'IGN). Seules les adresses et positions partent vers ces services, jamais les noms, téléphones ni notes de vos clients.' : 'Désactivé : carte schématique, distances estimées, clients placés au centre de leur commune ; rien ne sort de l\'appareil.'}</p>` : ''}
     <h4>Code de verrouillage</h4>
     ${on ? `<p class="note"><span class="chip ok">activé</span>Les données de cet appareil sont chiffrées (AES 256 bits), photos comprises. Sans le code, personne ne peut les lire, même avec le téléphone ou l'ordinateur en main.</p>
       <div class="grid2"><div class="field"><label for="lk-delay">Se verrouille après</label><select id="lk-delay">${[1,5,15,30].map(n => `<option value="${n}" ${(+s.lockDelay || 5) === n ? 'selected' : ''}>${n} min sans utilisation</option>`).join('')}</select></div></div>
@@ -3434,14 +3508,19 @@ function saveDetail(id){
   else delete c.chantier;
   state.detailOpen = true; saveContacts(); afterContactChange(); flash('Fiche enregistrée. La tournée et l\'agenda en tiennent compte.');
 }
-function addLieu(){
-  const nom = $('#l-nom').value.trim(), ou = $('#l-ou').value.trim();
-  if (!nom || !ou){ $('#l-msg').textContent = 'Indiquez un nom et une commune ou un code postal.'; return; }
-  const cp = cleanCp((ou.match(/\b\d{5}\b/) || [''])[0]), ville = ou.replace(/\b\d{5}\b/, '').trim();
-  const L = locate(cp, ville || ou);
-  if (!L){ $('#l-msg').textContent = 'Commune introuvable : vérifiez l\'orthographe ou ajoutez le code postal.'; return; }
-  state.settings.lieux = lieux().concat([{ id:'l' + Date.now().toString(36), nom, label:(cp ? cp + ' ' : '') + (ville || ou), lat:L.p[0], lng:L.p[1] }]);
+async function addLieu(gps){
+  const nom = $('#l-nom').value.trim(), ou = $('#l-ou').value.trim(), msg = t => { $('#l-msg').textContent = t; };
+  if (!nom || (!ou && !gps)){ msg('Indiquez un nom et une adresse.'); return; }
+  let P;
+  if (gps){ msg('Recherche de votre position…'); try { const g = await gpsHere(); P = { label:ou || 'Position relevée sur place', lat:g.lat, lng:g.lng, geo:'gps' }; } catch (e){ msg(e.message); return; } }
+  else { msg('Recherche de l\'adresse…'); P = await placeFromText(ou); }
+  if (!P){ msg('Adresse introuvable : vérifiez-la, ou indiquez au moins la commune et le code postal.'); return; }
+  const id = state.lieuEdit || ('l' + Date.now().toString(36)), L = lieux().slice(), i = L.findIndex(l => l.id === id), lieu = { id, nom, ...P };
+  if (i >= 0) L[i] = lieu; else L.push(lieu);
+  state.settings.lieux = L; state.lieuEdit = null;
+  if (id === 'home'){ state.settings.homeTown = P.label; state.settings.homeLat = P.lat; state.settings.homeLng = P.lng; }
   renderSettings(); saveSettings();
+  flash(P.geo === 'commune' ? `${nom} : placé au centre de la commune (adresse précise introuvable${geoAllowed() ? '' : ' hors connexion'}).` : `${nom} : placé ${GEO_LEVEL[P.geo] || ''}.`);
 }
 function addAbsence(du, au){ if (!du) return; if (!au || au < du) au = du; state.settings.absences = (S().absences || []).concat([{ du, au }]); saveSettings(); renderSettings(); }
 document.addEventListener('click', e => {
@@ -3479,7 +3558,11 @@ document.addEventListener('click', e => {
       const r = addExtraStop(pl, $('#x-dur').value, { apres:$('#x-apres').value, avant:$('#x-avant').value }); state.dayPanel = false; renderDay(); if (r.error) flash(r.error); }
   else if (a === 'det-save'){ saveDetail(b.dataset.id); }
   else if (a === 'ch-del'){ const c = byId(b.dataset.id); delete c.chantier; saveContacts(); afterContactChange(); }
-  else if (a === 'lieu-add'){ addLieu(); }
+  else if (a === 'lieu-add'){ addLieu(false); }
+  else if (a === 'lieu-gps'){ addLieu(true); }
+  else if (a === 'lieu-edit'){ state.lieuEdit = b.dataset.id; renderSettings(); $('#l-ou')?.focus(); }
+  else if (a === 'lieu-cancel'){ state.lieuEdit = null; renderSettings(); }
+  else if (a === 'fi-gps'){ gpsForContact(b.dataset.id); }
   else if (a === 'lieu-del'){ const L = lieux().filter(l => l.id !== b.dataset.id); state.settings.lieux = L; if (S().depart === b.dataset.id) state.settings.depart = L[0].id; if (S().retour === b.dataset.id) state.settings.retour = 'same';
       Object.values(state.dayOpts).forEach(o => { if (o.from === b.dataset.id) delete o.from; if (o.to === b.dataset.id) delete o.to; }); store.set('cop.jours', state.dayOpts); renderSettings(); saveSettings(); }
   else if (a === 'copy'){ const t = b.dataset.text; const done = () => { const o = b.textContent; b.textContent = 'Copié'; setTimeout(() => b.textContent = o, 1400); };
@@ -3624,7 +3707,7 @@ document.addEventListener('change', e => {
   else if (t.dataset.set){ state.settings[t.dataset.set] = t.type === 'number' ? +t.value : t.value; saveSettings(); }
   else if (t.dataset.pjour){ const n = +t.dataset.pjour, j = new Set(S().joursProspection || []); t.checked ? j.add(n) : j.delete(n); state.settings.joursProspection = [...j]; saveSettings(); }
   else if (t.id === 'o-conf'){ state.settings.confidentiel = t.checked; store.set('cop.settings', state.settings); applyConf(); renderSettings(); flash(t.checked ? 'Mode confidentiel activé : plus rien ne sort de l\'appareil.' : 'Mode confidentiel désactivé.'); }
-  else if (t.id === 'o-map'){ state.settings.carteEnLigne = t.checked; store.set('cop.settings', state.settings); renderSettings(); refreshScreen(); flash(t.checked ? 'Vraie carte activée.' : 'Carte schématique : rien ne sort de l\'appareil.'); }
+  else if (t.id === 'o-map'){ state.settings.carteEnLigne = t.checked; store.set('cop.settings', state.settings); renderSettings(); refreshScreen(); if (t.checked) geocodeAll(false); flash(t.checked ? 'Vraie carte activée.' : 'Carte schématique : rien ne sort de l\'appareil.'); }
   else if (t.id === 'lk-delay'){ state.settings.lockDelay = +t.value; store.set('cop.settings', state.settings); }
   else if (t.id === 'o-bonus'){ state.settings.prospectsBonus = t.checked; saveSettings(); }
   else if (t.dataset.jour){ const n = +t.dataset.jour, j = new Set(S().jours || []); t.checked ? j.add(n) : j.delete(n); state.settings.jours = [...j]; saveSettings(); }
@@ -3900,6 +3983,7 @@ if (S().setupDone) showTab('accueil'); else showSetup(0);
 startCapabilities();
 startSync();
 setTimeout(askLock, 600);
+setTimeout(() => { if (state.source === 'import') geocodeAll(false); }, 2500);
 }
 
 function setupDict(){

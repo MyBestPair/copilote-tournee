@@ -14,7 +14,7 @@ const BIN = {};
 for (const [k, v] of Object.entries(FILES)) if (v.b64) BIN[k] = Uint8Array.from(atob(v.b64), c => c.charCodeAt(0));
 const SEC = { 'X-Content-Type-Options':'nosniff', 'Referrer-Policy':'no-referrer', 'Permissions-Policy':'geolocation=(self), microphone=(self), camera=(self)', 'X-Robots-Tag':'noindex', 'X-Frame-Options':'DENY', 'Cross-Origin-Opener-Policy':'same-origin',
   'Strict-Transport-Security':'max-age=31536000',
-  'Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://tile.openstreetmap.org; connect-src 'self' https://router.project-osrm.org https://copilote-tournee.studio-conseiller.workers.dev; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'" };
+  'Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://tile.openstreetmap.org; connect-src 'self' https://router.project-osrm.org https://copilote-tournee.studio-conseiller.workers.dev https://data.geopf.fr; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'" };
 // Synchronisation : le serveur ne garde qu'une boîte chiffrée par l'appareil (clé inconnue ici), protégée par un jeton dont il ne garde que l'empreinte
 const ORIGINS = ['https://mybestpair.github.io', 'https://copilote-tournee.studio-conseiller.workers.dev'];
 const MAXB = 1900000;
