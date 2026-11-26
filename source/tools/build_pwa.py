@@ -12,7 +12,7 @@ head = """<!doctype html>
 <meta name="description" content="Copilote de tournée : vos tournées de commercial organisées, vos imprévus gérés, vos comptes rendus dictés. Version de test.">
 <meta name="robots" content="noindex">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://tile.openstreetmap.org; connect-src 'self' https://router.project-osrm.org https://copilote-tournee.studio-conseiller.workers.dev https://data.geopf.fr; worker-src 'self' blob:; base-uri 'self'; form-action 'none'; object-src 'none'">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -78,5 +78,5 @@ self.addEventListener('fetch', e => {
 });
 """ % version
 (out / 'sw.js').write_text(sw, encoding='utf-8')
-(out / '_headers').write_text("/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: no-referrer\n  Permissions-Policy: geolocation=(self), microphone=(self), camera=(self)\n/sw.js\n  Cache-Control: no-cache\n/index.html\n  Cache-Control: no-cache\n", encoding='utf-8')
+(out / '_headers').write_text("/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n  Permissions-Policy: geolocation=(self), microphone=(self), camera=(self)\n/sw.js\n  Cache-Control: no-cache\n/index.html\n  Cache-Control: no-cache\n", encoding='utf-8')
 print('version', version, '->', out)

@@ -898,7 +898,7 @@ function renderLeaflet(host, stops, A, B, pts){
   const m = LMAP = L.map(host, { zoomControl:true, scrollWheelZoom:false, tap:true });
   m.attributionControl.setPrefix(false);
   setTimeout(() => { try { m.invalidateSize(); } catch {} }, 250);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:18, attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>' }).addTo(m);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:18, referrerPolicy:'strict-origin-when-cross-origin', attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>' }).addTo(m);
   const col = { route:tok('route'), client:tok('client'), prospect:tok('prospect'), alert:tok('alert'), signal:tok('signal'), muted:tok('muted'), ink:tok('ink'), surface:tok('surface') };
   const inRoute = new Set(stops.map(s => s.id));
   pts.forEach(c => { if (inRoute.has(c.id)) return; const late = dueRatio(c) >= 1, pros = c.type === 'prospect';
